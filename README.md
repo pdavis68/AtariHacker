@@ -54,10 +54,9 @@ sudo mv AtariHacker-osx-arm64 /usr/local/bin/atarihacker
 # x64
 Invoke-WebRequest -Uri https://github.com/pdavis68/AtariHacker/releases/latest/download/AtariHacker-win-x64.zip -OutFile AtariHacker-win-x64.zip
 Expand-Archive -Path AtariHacker-win-x64.zip -DestinationPath .
-Move-Item AtariHacker-win-x64.exe $env:USERPROFILE\.dotnet\tools\atarihacker.exe
+Move-Item AtariHacker-win-x64.exe (Some directory in your `PATH`)\atarihacker.exe
 ```
 
-Make sure `$env:USERPROFILE\.dotnet\tools` is in your `PATH` (the .NET SDK installer typically adds this automatically), or choose a different directory that is already on your `PATH`.
 
 ### Verify
 
