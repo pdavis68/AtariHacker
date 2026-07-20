@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 
-namespace AtariHackerMCP.Helpers;
+namespace AtariHacker.Helpers;
 
 internal static partial class AddressParser
 {

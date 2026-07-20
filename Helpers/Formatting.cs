@@ -1,4 +1,4 @@
-namespace AtariHackerMCP.Helpers;
+namespace AtariHacker.Helpers;
 
 internal static class Formatting
 {

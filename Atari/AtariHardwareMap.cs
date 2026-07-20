@@ -1,6 +1,6 @@
-using AtariHackerMCP.State;
+using AtariHacker.State;
 
-namespace AtariHackerMCP.Atari;
+namespace AtariHacker.Atari;
 
 public static class AtariHardwareMap
 {

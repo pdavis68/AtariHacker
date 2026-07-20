@@ -1,7 +1,7 @@
-using AtariHackerMCP.Atari;
-using AtariHackerMCP.State;
+using AtariHacker.Atari;
+using AtariHacker.State;
 
-namespace AtariHackerMCP.Helpers;
+namespace AtariHacker.Helpers;
 
 internal static class XexAddressResolver
 {

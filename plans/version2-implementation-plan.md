@@ -1,4 +1,4 @@
-# AtariHackerMCP v2 Implementation Plan
+# AtariHacker v2 Implementation Plan
 
 ## Overview
 

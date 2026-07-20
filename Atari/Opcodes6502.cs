@@ -1,4 +1,4 @@
-namespace AtariHackerMCP.Atari;
+namespace AtariHacker.Atari;
 
 public enum AddressingMode
 {

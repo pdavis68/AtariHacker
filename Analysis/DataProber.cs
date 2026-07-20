@@ -1,7 +1,7 @@
-using AtariHackerMCP.Helpers;
-using AtariHackerMCP.State;
+using AtariHacker.Helpers;
+using AtariHacker.State;
 
-namespace AtariHackerMCP.Analysis;
+namespace AtariHacker.Analysis;
 
 /// <summary>
 /// Result of probing a memory range for data type identification.

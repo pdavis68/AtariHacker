@@ -1,7 +1,7 @@
 using System.Text;
-using AtariHackerMCP.State;
+using AtariHacker.State;
 
-namespace AtariHackerMCP.Tools;
+namespace AtariHacker.Tools;
 
 public static class ScriptRunner
 {
@@ -118,7 +118,8 @@ public static class ScriptRunner
                 GetArg(args, "offset"),
                 int.Parse(GetArg(args, "numBytes")),
                 GetOptArg(args, "startAddress"),
-                GetOptArg(args, "format") ?? "listing"),
+                GetOptArg(args, "format") ?? "listing",
+                bool.TryParse(GetOptArg(args, "analyze"), out var an) && an),
             "analyze_disassembly" => AnalysisTools.AnalyzeDisassembly(session, symbols, zeroPageMap,
                 GetOptArg(args, "startAddress"),
                 int.TryParse(GetOptArg(args, "numBytes"), out var nb) ? nb : null,

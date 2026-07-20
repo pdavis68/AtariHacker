@@ -1,8 +1,8 @@
-using AtariHackerMCP.Atari;
-using AtariHackerMCP.Helpers;
-using AtariHackerMCP.State;
+using AtariHacker.Atari;
+using AtariHacker.Helpers;
+using AtariHacker.State;
 
-namespace AtariHackerMCP.Analysis;
+namespace AtariHacker.Analysis;
 
 /// <summary>
 /// Represents the complete reference graph built during Pass 1 analysis.
@@ -174,6 +174,21 @@ public static class DisassemblyAnalyzer
             }
 
             position += entry.Bytes;
+        }
+
+        // Detect Atari boot sector header (6 bytes at the start of the binary)
+        // Pattern: [boot_flag] [sector_count] [load_addr_lo] [load_addr_hi] [init_addr_lo] [init_addr_hi]
+        // Boot flag is typically $00 (continue) or $D0 (stop/run)
+        if (data.Length >= 6 && (data[0] == 0x00 || data[0] == 0xD0))
+        {
+            for (var i = 0; i < 6; i++)
+            {
+                var hdrAddr = ResolveAddress(segments, baseAddress, i);
+                if (hdrAddr is not null)
+                {
+                    absoluteDataReferences.Add(hdrAddr.Value);
+                }
+            }
         }
 
         return new ReferenceGraph(
@@ -425,20 +440,7 @@ public static class DisassemblyAnalyzer
             }
         }
 
-        // 6. OS variable symbols (zero page, if group enabled)
-        foreach (var kvp in zeroPageMap)
-        {
-            if (kvp.Value.IsHardware && symbols.EnabledGroups.HasFlag(SymbolGroup.OsVariables))
-            {
-                labels[kvp.Key] = kvp.Value.Label;
-                if (!string.IsNullOrWhiteSpace(kvp.Value.Comment))
-                {
-                    comments[kvp.Key] = kvp.Value.Comment!;
-                }
-            }
-        }
-
-        // 7. Branch targets → L_XXXX (lowest priority)
+        // 6. Branch targets → L_XXXX (lowest priority)
         foreach (var addr in references.BranchTargets)
         {
             if (!labels.ContainsKey(addr))

@@ -1,6 +1,6 @@
-using AtariHackerMCP.State;
+using AtariHacker.State;
 
-namespace AtariHackerMCP.Helpers;
+namespace AtariHacker.Helpers;
 
 internal static class SymbolResolver
 {

@@ -1,9 +1,9 @@
 ﻿using System.CommandLine;
-using AtariHackerMCP.Atari;
-using AtariHackerMCP.State;
-using AtariHackerMCP.Tools;
+using AtariHacker.Atari;
+using AtariHacker.State;
+using AtariHacker.Tools;
 
-namespace AtariHackerMCP;
+namespace AtariHacker;
 
 public static class Program
 {

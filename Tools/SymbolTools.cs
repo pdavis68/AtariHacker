@@ -1,9 +1,9 @@
 using System.Text.RegularExpressions;
-using AtariHackerMCP.Atari;
-using AtariHackerMCP.Helpers;
-using AtariHackerMCP.State;
+using AtariHacker.Atari;
+using AtariHacker.Helpers;
+using AtariHacker.State;
 
-namespace AtariHackerMCP.Tools;
+namespace AtariHacker.Tools;
 
 public static partial class SymbolTools
 {

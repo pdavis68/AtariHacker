@@ -1,4 +1,4 @@
-namespace AtariHackerMCP.State;
+namespace AtariHacker.State;
 
 public sealed class ZeroPageMap : Dictionary<byte, SymbolEntry>
 {

@@ -1,7 +1,7 @@
-using AtariHackerMCP.Helpers;
-using AtariHackerMCP.State;
+using AtariHacker.Helpers;
+using AtariHacker.State;
 
-namespace AtariHackerMCP.Tools;
+namespace AtariHacker.Tools;
 
 public static class FindPatternTool
 {

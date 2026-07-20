@@ -17,7 +17,7 @@ Publish a release build:
 
 ```bash
 dotnet publish -c Release -o publish
-./publish/AtariHackerMCP --help
+./publish/AtariHacker --help
 ```
 
 ## Install
@@ -283,7 +283,7 @@ When `--analyze` is passed to `disassemble`, the engine performs three passes:
 
 1. **Pass 1 — Reference Collection**: Scans all instruction boundaries across the ROM, recording JSR targets, JMP targets, branch targets, indirect jump targets, and absolute/indirect data references into a `ReferenceGraph`.
 2. **Pass 2 — Code Region Tracing**: Starting from each code entry point, traces execution flow (following JSR, JMP, branches, stopping at RTS/RTI/BRK) to mark bytes as code or data.
-3. **Pass 3 — Label Generation**: Produces meaningful labels (`sub_XXXX`, `jmp_XXXX`, `data_XXXX`, `L_XXXX`) with proper priority ordering (user > subroutine > data > hardware > OS > branch).
+3. **Pass 3 — Label Generation**: Produces meaningful labels (`sub_XXXX`, `jmp_XXXX`, `data_XXXX`, `L_XXXX`) with proper priority ordering (user > subroutine > data > hardware > branch). Zero-page OS variable symbols are shown as operand comments, not code labels.
 
 ### Example
 
@@ -350,7 +350,7 @@ load game.xex
 symbol define address=$1540 label=game_init
 segment define name=boot_loader start=$0700 end=$087F type=code
 segment define name=main_code start=$0C00 end=$1CFF type=code
-disassemble offset=$0700 bytes=384 format=ca65 --analyze
+disassemble offset=$0700 numBytes=384 format=ca65 analyze=true
 segment linker-config output=game.cfg
 labels save --output=game.annotations.json
 ```

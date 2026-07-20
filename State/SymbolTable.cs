@@ -1,4 +1,4 @@
-namespace AtariHackerMCP.State;
+namespace AtariHacker.State;
 
 [Flags]
 public enum SymbolGroup

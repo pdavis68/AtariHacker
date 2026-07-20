@@ -1,10 +1,10 @@
 using System.Text;
-using AtariHackerMCP.Analysis;
-using AtariHackerMCP.Atari;
-using AtariHackerMCP.Helpers;
-using AtariHackerMCP.State;
+using AtariHacker.Analysis;
+using AtariHacker.Atari;
+using AtariHacker.Helpers;
+using AtariHacker.State;
 
-namespace AtariHackerMCP.Tools;
+namespace AtariHacker.Tools;
 
 public static class AnalysisTools
 {

@@ -1,6 +1,6 @@
-using AtariHackerMCP.Helpers;
+using AtariHacker.Helpers;
 
-namespace AtariHackerMCP.State;
+namespace AtariHacker.State;
 
 public enum SegmentType
 {

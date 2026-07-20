@@ -1,6 +1,6 @@
-using AtariHackerMCP.Atari;
+using AtariHacker.Atari;
 
-namespace AtariHackerMCP.State;
+namespace AtariHacker.State;
 
 public sealed record BootHeader(
     byte Flag,

@@ -1,7 +1,7 @@
 using System.Text;
-using AtariHackerMCP.Helpers;
+using AtariHacker.Helpers;
 
-namespace AtariHackerMCP.Analysis;
+namespace AtariHacker.Analysis;
 
 /// <summary>
 /// Binary comparison of ROM or ATR files.

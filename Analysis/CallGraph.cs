@@ -1,8 +1,8 @@
 using System.Text;
-using AtariHackerMCP.Helpers;
-using AtariHackerMCP.State;
+using AtariHacker.Helpers;
+using AtariHacker.State;
 
-namespace AtariHackerMCP.Analysis;
+namespace AtariHacker.Analysis;
 
 /// <summary>
 /// Call graph construction and formatting.

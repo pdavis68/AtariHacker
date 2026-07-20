@@ -1,6 +1,6 @@
-using AtariHackerMCP.Helpers;
+using AtariHacker.Helpers;
 
-namespace AtariHackerMCP.Tools;
+namespace AtariHacker.Tools;
 
 public static class ConversionTools
 {

@@ -1,4 +1,4 @@
-namespace AtariHackerMCP.Atari;
+namespace AtariHacker.Atari;
 
 public sealed record XexSegment(
     ushort LoadAddress,

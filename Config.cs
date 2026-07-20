@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace AtariHackerMCP;
+namespace AtariHacker;
 
 /// <summary>
 /// Configuration loaded from .atari-hacker.config in the current directory.

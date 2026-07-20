@@ -1,9 +1,9 @@
 using System.Text;
-using AtariHackerMCP.Analysis;
-using AtariHackerMCP.Helpers;
-using AtariHackerMCP.State;
+using AtariHacker.Analysis;
+using AtariHacker.Helpers;
+using AtariHacker.State;
 
-namespace AtariHackerMCP.Tools;
+namespace AtariHacker.Tools;
 
 public static class SegmentTools
 {

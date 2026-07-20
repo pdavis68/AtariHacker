@@ -1,7 +1,7 @@
-using AtariHackerMCP.Atari;
-using AtariHackerMCP.Helpers;
+using AtariHacker.Atari;
+using AtariHacker.Helpers;
 
-namespace AtariHackerMCP.Analysis;
+namespace AtariHacker.Analysis;
 
 /// <summary>
 /// Code coverage analysis — determines which bytes are code vs. data

@@ -1,10 +1,10 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using AtariHackerMCP.Atari;
-using AtariHackerMCP.Helpers;
+using AtariHacker.Atari;
+using AtariHacker.Helpers;
 
-namespace AtariHackerMCP.State;
+namespace AtariHacker.State;
 
 public sealed class SessionPersistence(RomSession session, SymbolTable symbols, ZeroPageMap zeroPageMap, SegmentManager segmentManager)
 {

@@ -101,6 +101,8 @@ All numeric parameters (addresses, offsets, etc.) accept three formats:
 
 If a hex value contains any hex digits (`A`–`F`), it is **always** parsed as hex even without a prefix. To be explicit, always use `$` or `0x` prefix.
 
+> **⚠️ Shell quoting:** In bash/zsh, `$` is a variable expansion character. Always **quote** hex values containing `$` when passing them as option values, e.g. `--start-address='$0700'` or `--start-address=$0700` (when `$0700` is not quoted, bash expands it as a variable — typically empty). Single quotes prevent expansion; double quotes do not if the value contains a variable-like reference.
+
 ```bash
 # These are all equivalent
 atarihacker disassemble 0x700 256
@@ -203,7 +205,7 @@ Disassembles 6502 machine code from the loaded binary. The command supports mult
 
 | Option | Description |
 |--------|-------------|
-| `--start-address <addr>` | Override the memory start address |
+| `--start-address <addr>` | Override the memory start address. **Important:** In bash, always quote hex values to prevent shell variable expansion, e.g. `--start-address='$0700'` or `--start-address='0x0700'` |
 | `--format <format>` | Output format: `listing` (default), `ca65`, `atasm`, or `mac65` |
 | `--analyze` | Use multi-pass analysis for label generation and code/data separation |
 
@@ -1184,7 +1186,9 @@ Decode and display the boot sector header from an ATR disk image. Shows the boot
 atarihacker atr analyze-boot disk.atr
 ```
 
-**Output:**
+**Output examples:**
+
+Standard DOS boot (`$00` boot flag):
 ```
 Boot Sector Analysis: /path/to/disk.atr
   Boot flag:       $00  (continue loading)
@@ -1195,6 +1199,26 @@ Boot Sector Analysis: /path/to/disk.atr
   Header bytes:    00 03 00 07 00 07
   DOS boot:        Yes  (DOS boot)
 ```
+
+Custom loader (`$D0` boot flag — "stop/run"):
+```
+Boot Sector Analysis: /path/to/disk.atr
+  Boot flag:       $D0  (stop/run — stop loading and run)
+  Sectors to load: 3
+  Load address:    $0700
+  Init address:    $1540
+  Entry point:     $0706  (first instruction after boot header)
+  Header bytes:    D0 03 00 07 40 15
+  DOS boot:        No  (custom loader)
+```
+
+The boot header format is:
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| 0 | 1 | Boot flag | `$00` = continue loading, `$D0` = stop and run |
+| 1 | 1 | Sector count | Number of sectors to load |
+| 2 | 2 | Load address | Destination memory address (little-endian) |
+| 4 | 2 | Init address | Entry point to jump to after loading (little-endian) |
 
 #### `atr sector-dump <path> <sector>`
 
@@ -1396,8 +1420,7 @@ Produces meaningful labels with a priority ordering:
 | 3 | `jmp_XXXX` | JMP targets |
 | 4 | `data_XXXX` | Absolute data references in data regions |
 | 5 | Hardware names | GTIA/POKEY/PIA/ANTIC register symbols |
-| 6 | OS variable names | Zero-page OS variable symbols |
-| 7 (lowest) | `L_XXXX` | Branch targets |
+| 6 (lowest) | `L_XXXX` | Branch targets |
 
 ### Procedure Detection
 
@@ -1625,7 +1648,7 @@ command_name param1=value1 param2=value2
 |----------------|---------------|-------------------|
 | `load_rom` | `load` | `filePath` |
 | `rom_info` | `info` | — |
-| `disassemble` | `disassemble` | `offset`, `numBytes`; optional: `startAddress`, `format` |
+| `disassemble` | `disassemble` | `offset`, `numBytes`; optional: `startAddress`, `format`, `analyze` |
 | `hex_dump` | `hex-dump` | `offset`, `numBytes`; optional: `startAddress` |
 | `find_pattern` | `find-pattern` | `pattern`; optional: `maxResults` |
 | `find_strings` | `find-strings` | optional: `minLength`, `encoding`, `filter`, `maxResults` |
