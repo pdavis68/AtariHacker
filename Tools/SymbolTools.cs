@@ -13,7 +13,8 @@ public static partial class SymbolTools
         SessionPersistence persistence,
         string address,
         string label,
-        string? comment = null)
+        string? comment = null,
+        bool force = false)
     {
         try
         {
@@ -28,6 +29,16 @@ public static partial class SymbolTools
             }
 
             var parsedAddress = AddressParser.ParseAddress(address);
+
+            // Check if the address already has a hardware symbol
+            if (!force && symbols.TryGetValue(parsedAddress, out var existing))
+            {
+                if (existing.IsHardware && !existing.IsUserDefined)
+                {
+                    return $"WARNING: Address {Formatting.HexWord(parsedAddress)} already has a hardware symbol '{existing.Label}'. Use --force to overwrite.";
+                }
+            }
+
             symbols[parsedAddress] = new SymbolEntry(label, comment, false, true);
             persistence.Save();
             return $"Defined symbol {label} at {Formatting.HexWord(parsedAddress)}.";
@@ -42,7 +53,8 @@ public static partial class SymbolTools
         RomSession session,
         SymbolTable symbols,
         SessionPersistence persistence,
-        string address)
+        string address,
+        bool dryRun = false)
     {
         try
         {
@@ -54,12 +66,17 @@ public static partial class SymbolTools
             var parsedAddress = AddressParser.ParseAddress(address);
             if (!symbols.TryGetValue(parsedAddress, out var existing))
             {
-                return $"ERROR: No symbol defined at {Formatting.HexWord(parsedAddress)}.";
+                return $"# Warning: no symbol at {Formatting.HexWord(parsedAddress)}, nothing to remove.";
             }
 
             if (existing.IsHardware && !existing.IsUserDefined)
             {
                 return $"ERROR: Cannot remove hardware symbol at {Formatting.HexWord(parsedAddress)}.";
+            }
+
+            if (dryRun)
+            {
+                return $"# DRY RUN: Would remove symbol '{existing.Label}' at {Formatting.HexWord(parsedAddress)}.\n# Run without --dry-run to apply.";
             }
 
             symbols.Remove(parsedAddress);

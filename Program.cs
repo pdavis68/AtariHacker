@@ -247,6 +247,38 @@ public static class Program
         }, covStartArg, covEndArg, FormatOption.Option, targetOption, configOption, verboseOption);
 
         // ═══════════════════════════════════════════════════════════════════
+        // COMPOUND COMMANDS
+        // ═══════════════════════════════════════════════════════════════════
+
+        var analyzeDisassembleCommand = new Command("analyze-disassemble", "Run multi-pass analysis then disassemble a range");
+        var adOffsetArg = new Argument<string>("offset", "File offset as decimal or hex");
+        var adBytesArg = new Argument<int>("bytes", "Number of bytes to disassemble");
+        var adFormatOpt = new Option<string>("--format", () => "listing", "Output format: listing, ca65, atasm, or mac65");
+        analyzeDisassembleCommand.AddArgument(adOffsetArg);
+        analyzeDisassembleCommand.AddArgument(adBytesArg);
+        analyzeDisassembleCommand.AddOption(adFormatOpt);
+        analyzeDisassembleCommand.SetHandler((string offset, int bytes, string format, string? target, string? config, bool verbose) =>
+        {
+            Run((s, v) => AnalysisTools.AnalyzeAndDisassemble(s.Rom, s.Symbols, s.ZeroPage, s.Segments, offset, bytes, format, v), target, config, verbose);
+        }, adOffsetArg, adBytesArg, adFormatOpt, targetOption, configOption, verboseOption);
+
+        var probeAndSegmentCommand = new Command("probe-and-segment", "Probe a range then auto-create a segment from highest-confidence detection");
+        var psStartArg = new Argument<string>("start", "Start address (hex)");
+        var psEndArg = new Argument<string>("end", "End address (hex, inclusive)");
+        probeAndSegmentCommand.AddArgument(psStartArg);
+        probeAndSegmentCommand.AddArgument(psEndArg);
+        probeAndSegmentCommand.SetHandler((string start, string end, string? target, string? config, bool verbose) =>
+        {
+            Run((s, v) => AnalysisTools.ProbeAndSegment(s.Rom, s.Symbols, s.ZeroPage, s.Segments, s.Persistence, start, end, v), target, config, verbose);
+        }, psStartArg, psEndArg, targetOption, configOption, verboseOption);
+
+        var analyzeFullCommand = new Command("analyze-full", "Run full analysis, generate labels, create segments, and output summary");
+        analyzeFullCommand.SetHandler((string? target, string? config, bool verbose) =>
+        {
+            Run((s, v) => AnalysisTools.AnalyzeFull(s.Rom, s.Symbols, s.ZeroPage, s.Segments, s.Persistence, v), target, config, verbose);
+        }, targetOption, configOption, verboseOption);
+
+        // ═══════════════════════════════════════════════════════════════════
         // CONTROL FLOW & XREF
         // ═══════════════════════════════════════════════════════════════════
 
@@ -281,22 +313,26 @@ public static class Program
         var symAddrArg = new Argument<string>("address", "Memory address");
         var symLabelArg = new Argument<string>("label", "Label to define");
         var symCommentOpt = new Option<string?>("--comment", "Optional comment");
+        var symForceOpt = new Option<bool>("--force", "Allow overwriting hardware symbols");
         symbolDefineCommand.AddArgument(symAddrArg);
         symbolDefineCommand.AddArgument(symLabelArg);
         symbolDefineCommand.AddOption(symCommentOpt);
-        symbolDefineCommand.SetHandler((string addr, string label, string? comment, string? target, string? config, bool verbose) =>
+        symbolDefineCommand.AddOption(symForceOpt);
+        symbolDefineCommand.SetHandler((string addr, string label, string? comment, bool force, string? target, string? config, bool verbose) =>
         {
-            Run((s, v) => SymbolTools.DefineSymbol(s.Rom, s.Symbols, s.Persistence, addr, label, comment), target, config, verbose);
-        }, symAddrArg, symLabelArg, symCommentOpt, targetOption, configOption, verboseOption);
+            Run((s, v) => SymbolTools.DefineSymbol(s.Rom, s.Symbols, s.Persistence, addr, label, comment, force), target, config, verbose);
+        }, symAddrArg, symLabelArg, symCommentOpt, symForceOpt, targetOption, configOption, verboseOption);
         symbolCommand.AddCommand(symbolDefineCommand);
 
         var symbolRemoveCommand = new Command("remove", "Remove a user-defined symbol");
         var symRemoveAddrArg = new Argument<string>("address", "Address of the symbol to remove");
+        var symRemoveDryRunOpt = new Option<bool>("--dry-run", "Show what would be removed without making changes");
         symbolRemoveCommand.AddArgument(symRemoveAddrArg);
-        symbolRemoveCommand.SetHandler((string addr, string? target, string? config, bool verbose) =>
+        symbolRemoveCommand.AddOption(symRemoveDryRunOpt);
+        symbolRemoveCommand.SetHandler((string addr, bool dryRun, string? target, string? config, bool verbose) =>
         {
-            Run((s, v) => SymbolTools.RemoveSymbol(s.Rom, s.Symbols, s.Persistence, addr), target, config, verbose);
-        }, symRemoveAddrArg, targetOption, configOption, verboseOption);
+            Run((s, v) => SymbolTools.RemoveSymbol(s.Rom, s.Symbols, s.Persistence, addr, dryRun), target, config, verbose);
+        }, symRemoveAddrArg, symRemoveDryRunOpt, targetOption, configOption, verboseOption);
         symbolCommand.AddCommand(symbolRemoveCommand);
 
         var symbolLookupCommand = new Command("lookup", "Look up the symbol entry for an address");
@@ -361,12 +397,14 @@ public static class Program
 
         var segRemoveCommand = new Command("remove", "Remove a defined memory segment by name");
         var segRemoveNameArg = new Argument<string>("name", "Name of the segment to remove");
+        var segRemoveDryRunOpt = new Option<bool>("--dry-run", "Show what would be removed without making changes");
         segRemoveCommand.AddArgument(segRemoveNameArg);
-        segRemoveCommand.SetHandler((string name) =>
+        segRemoveCommand.AddOption(segRemoveDryRunOpt);
+        segRemoveCommand.SetHandler((string name, bool dryRun) =>
         {
             var s = CreateCliSession();
-            Console.WriteLine(SegmentTools.RemoveSegment(s.Segments, s.Persistence, name));
-        }, segRemoveNameArg);
+            Console.WriteLine(SegmentTools.RemoveSegment(s.Segments, s.Persistence, name, dryRun));
+        }, segRemoveNameArg, segRemoveDryRunOpt);
         segmentCommand.AddCommand(segRemoveCommand);
 
         var segListCommand = new Command("list", "List all defined memory segments");
@@ -379,11 +417,13 @@ public static class Program
         segmentCommand.AddCommand(segListCommand);
 
         var segClearCommand = new Command("clear", "Clear all defined memory segments");
-        segClearCommand.SetHandler(() =>
+        var segClearDryRunOpt = new Option<bool>("--dry-run", "Show which segments would be removed without making changes");
+        segClearCommand.AddOption(segClearDryRunOpt);
+        segClearCommand.SetHandler((bool dryRun) =>
         {
             var s = CreateCliSession();
-            Console.WriteLine(SegmentTools.ClearSegments(s.Segments, s.Persistence));
-        });
+            Console.WriteLine(SegmentTools.ClearSegments(s.Segments, s.Persistence, dryRun));
+        }, segClearDryRunOpt);
         segmentCommand.AddCommand(segClearCommand);
 
         var segLinkerCommand = new Command("linker-config", "Generate a cc65 linker configuration file");
@@ -475,12 +515,14 @@ public static class Program
         var atrCreateOutputArg = new Argument<string>("output", "Output path");
         var atrCreateSectorsArg = new Argument<int>("sectors", "Number of sectors (720, 1040, etc.)");
         var atrCreateDensityArg = new Argument<string>("density", "Density: sd (single), dd (double), ed (enhanced)");
+        var atrCreateDryRunOpt = new Option<bool>("--dry-run", "Show what would be created without writing");
         atrCreateCommand.AddArgument(atrCreateOutputArg);
         atrCreateCommand.AddArgument(atrCreateSectorsArg);
         atrCreateCommand.AddArgument(atrCreateDensityArg);
-        atrCreateCommand.SetHandler((string output, int sectors, string density) =>
-            Console.WriteLine(AtrWriteTools.CreateAtr(output, sectors, density)),
-            atrCreateOutputArg, atrCreateSectorsArg, atrCreateDensityArg);
+        atrCreateCommand.AddOption(atrCreateDryRunOpt);
+        atrCreateCommand.SetHandler((string output, int sectors, string density, bool dryRun) =>
+            Console.WriteLine(AtrWriteTools.CreateAtr(output, sectors, density, dryRun)),
+            atrCreateOutputArg, atrCreateSectorsArg, atrCreateDensityArg, atrCreateDryRunOpt);
         atrCommand.AddCommand(atrCreateCommand);
 
         var atrExtractCommand = new Command("extract", "Extract a file from an ATR image and save to disk");
@@ -499,24 +541,28 @@ public static class Program
         var atrInjectPathArg = new Argument<string>("path", "Path to the ATR file");
         var atrInjectNameArg = new Argument<string>("name", "Atari DOS filename to replace");
         var atrInjectInputArg = new Argument<string>("input", "Path to the input file");
+        var atrInjectDryRunOpt = new Option<bool>("--dry-run", "Show what would be injected without making changes");
         atrInjectCommand.AddArgument(atrInjectPathArg);
         atrInjectCommand.AddArgument(atrInjectNameArg);
         atrInjectCommand.AddArgument(atrInjectInputArg);
-        atrInjectCommand.SetHandler((string path, string name, string input) =>
-            Console.WriteLine(AtrWriteTools.InjectAtrFile(path, name, input)),
-            atrInjectPathArg, atrInjectNameArg, atrInjectInputArg);
+        atrInjectCommand.AddOption(atrInjectDryRunOpt);
+        atrInjectCommand.SetHandler((string path, string name, string input, bool dryRun) =>
+            Console.WriteLine(AtrWriteTools.InjectAtrFile(path, name, input, dryRun)),
+            atrInjectPathArg, atrInjectNameArg, atrInjectInputArg, atrInjectDryRunOpt);
         atrCommand.AddCommand(atrInjectCommand);
 
         var atrWriteSectorCommand = new Command("write-sector", "Write raw data to a specific sector");
         var atrWsPathArg = new Argument<string>("path", "Path to the ATR file");
         var atrWsSectorArg = new Argument<string>("sector", "Sector number (1-based)");
         var atrWsInputArg = new Argument<string>("input", "Path to the input file");
+        var atrWsDryRunOpt = new Option<bool>("--dry-run", "Show sector diff without making changes");
         atrWriteSectorCommand.AddArgument(atrWsPathArg);
         atrWriteSectorCommand.AddArgument(atrWsSectorArg);
         atrWriteSectorCommand.AddArgument(atrWsInputArg);
-        atrWriteSectorCommand.SetHandler((string path, string sector, string input) =>
-            Console.WriteLine(AtrWriteTools.WriteAtrSector(path, sector, input)),
-            atrWsPathArg, atrWsSectorArg, atrWsInputArg);
+        atrWriteSectorCommand.AddOption(atrWsDryRunOpt);
+        atrWriteSectorCommand.SetHandler((string path, string sector, string input, bool dryRun) =>
+            Console.WriteLine(AtrWriteTools.WriteAtrSector(path, sector, input, dryRun)),
+            atrWsPathArg, atrWsSectorArg, atrWsInputArg, atrWsDryRunOpt);
         atrCommand.AddCommand(atrWriteSectorCommand);
 
         var atrWriteFileCommand = new Command("write-file", "Write a file to an ATR image, creating a new directory entry");
@@ -524,13 +570,15 @@ public static class Program
         var atrWfNameArg = new Argument<string>("name", "Atari DOS filename (8.3 format)");
         var atrWfInputArg = new Argument<string>("input", "Path to the input file");
         var atrWfStartOpt = new Option<string?>("--start-sector", "Starting sector for the file data (hex)");
+        var atrWfDryRunOpt = new Option<bool>("--dry-run", "Show what would be written without making changes");
         atrWriteFileCommand.AddArgument(atrWfPathArg);
         atrWriteFileCommand.AddArgument(atrWfNameArg);
         atrWriteFileCommand.AddArgument(atrWfInputArg);
         atrWriteFileCommand.AddOption(atrWfStartOpt);
-        atrWriteFileCommand.SetHandler((string path, string name, string input, string? startSector) =>
-            Console.WriteLine(AtrWriteTools.WriteAtrFile(path, name, input, startSector)),
-            atrWfPathArg, atrWfNameArg, atrWfInputArg, atrWfStartOpt);
+        atrWriteFileCommand.AddOption(atrWfDryRunOpt);
+        atrWriteFileCommand.SetHandler((string path, string name, string input, string? startSector, bool dryRun) =>
+            Console.WriteLine(AtrWriteTools.WriteAtrFile(path, name, input, startSector, dryRun)),
+            atrWfPathArg, atrWfNameArg, atrWfInputArg, atrWfStartOpt, atrWfDryRunOpt);
         atrCommand.AddCommand(atrWriteFileCommand);
 
         var atrBootSectorCommand = new Command("analyze-boot", "Decode the boot sector header from an ATR disk image");
@@ -627,6 +675,9 @@ public static class Program
         rootCommand.AddCommand(probeCommand);
         rootCommand.AddCommand(callgraphCommand);
         rootCommand.AddCommand(coverageCommand);
+        rootCommand.AddCommand(analyzeDisassembleCommand);
+        rootCommand.AddCommand(probeAndSegmentCommand);
+        rootCommand.AddCommand(analyzeFullCommand);
         rootCommand.AddCommand(traceCommand);
         rootCommand.AddCommand(xrefCommand);
         rootCommand.AddCommand(symbolCommand);

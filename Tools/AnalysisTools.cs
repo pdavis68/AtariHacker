@@ -8,6 +8,240 @@ namespace AtariHacker.Tools;
 
 public static class AnalysisTools
 {
+    /// <summary>
+    /// Compound command: run multi-pass analysis then immediately disassemble a range.
+    /// </summary>
+    public static string AnalyzeAndDisassemble(
+        RomSession session,
+        SymbolTable symbols,
+        ZeroPageMap zeroPageMap,
+        SegmentManager segmentManager,
+        string startAddress,
+        int bytes,
+        string format = "listing",
+        VerboseContext? verbose = null)
+    {
+        try
+        {
+            if (!session.IsLoaded || session.Data is null)
+            {
+                return "ERROR: No ROM is currently loaded. Use LoadRom first.";
+            }
+
+            // 1. Run analysis
+            var data = session.Data;
+            var segments = session.Segments;
+            var baseAddress = session.BaseAddress;
+
+            var references = DisassemblyAnalyzer.Analyze(data, segments, baseAddress);
+            var (codeRegions, dataRegions) = DisassemblyAnalyzer.TraceCodeRegions(data, references, segments, baseAddress);
+            var labelMap = DisassemblyAnalyzer.GenerateLabels(references, symbols, zeroPageMap, codeRegions);
+
+            if (verbose is not null)
+            {
+                verbose.BytesProcessed = data.Length;
+                verbose.PassesCompleted = 3;
+            }
+
+            // 2. Run disassembly with analysis results
+            var result = DisassemblerTool.Disassemble(session, symbols, zeroPageMap,
+                startAddress, bytes, startAddress, format, analyze: true, verbose);
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            return $"ERROR: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Compound command: probe a range then auto-create a segment from the highest-confidence detection.
+    /// </summary>
+    public static string ProbeAndSegment(
+        RomSession session,
+        SymbolTable symbols,
+        ZeroPageMap zeroPageMap,
+        SegmentManager segmentManager,
+        SessionPersistence persistence,
+        string start,
+        string end,
+        VerboseContext? verbose = null)
+    {
+        try
+        {
+            if (!session.IsLoaded || session.Data is null)
+            {
+                return "ERROR: No ROM is currently loaded. Use LoadRom first.";
+            }
+
+            var startAddr = AddressParser.ParseAddress(start);
+            var endAddr = AddressParser.ParseAddress(end);
+
+            if (startAddr > endAddr)
+            {
+                return "ERROR: Start address must be <= end address.";
+            }
+
+            // Run probe
+            var result = DataProber.ProbeData(session.Data, startAddr, endAddr);
+
+            if (verbose is not null)
+            {
+                verbose.BytesProcessed = endAddr - startAddr + 1;
+                verbose.Confidence = result.Confidence;
+            }
+
+            // Auto-create segment based on highest-confidence detection
+            var segmentType = result.Confidence switch
+            {
+                "High" => result.Description.Contains("String", StringComparison.OrdinalIgnoreCase) ? "text"
+                    : result.Description.Contains("Display", StringComparison.OrdinalIgnoreCase) ? "graphics"
+                    : result.Description.Contains("Font", StringComparison.OrdinalIgnoreCase) ? "graphics"
+                    : result.Description.Contains("Table", StringComparison.OrdinalIgnoreCase) ? "data"
+                    : "data",
+                "Medium" => "data",
+                _ => "data"
+            };
+
+            var segmentName = $"auto_{startAddr:X4}_{endAddr:X4}";
+            var segmentResult = SegmentTools.DefineSegment(segmentManager, persistence,
+                segmentName, segmentType, start, end,
+                $"Auto-created from probe: {result.Description}");
+
+            var sb = new StringBuilder();
+            sb.AppendLine("=== Probe Results ===");
+            sb.AppendLine(result.Description);
+            sb.AppendLine($"  Confidence: {result.Confidence}");
+            foreach (var detail in result.Details)
+            {
+                sb.AppendLine($"  {detail}");
+            }
+            sb.AppendLine();
+            sb.AppendLine("=== Auto-Created Segment ===");
+            sb.AppendLine(segmentResult);
+
+            return sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            return $"ERROR: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Compound command: run full analysis, generate labels, create segments, and output summary.
+    /// </summary>
+    public static string AnalyzeFull(
+        RomSession session,
+        SymbolTable symbols,
+        ZeroPageMap zeroPageMap,
+        SegmentManager segmentManager,
+        SessionPersistence persistence,
+        VerboseContext? verbose = null)
+    {
+        try
+        {
+            if (!session.IsLoaded || session.Data is null)
+            {
+                return "ERROR: No ROM is currently loaded. Use LoadRom first.";
+            }
+
+            var data = session.Data;
+            var segments = session.Segments;
+            var baseAddress = session.BaseAddress;
+
+            // 1. Run full analysis
+            var references = DisassemblyAnalyzer.Analyze(data, segments, baseAddress);
+            var (codeRegions, dataRegions) = DisassemblyAnalyzer.TraceCodeRegions(data, references, segments, baseAddress);
+            var labelMap = DisassemblyAnalyzer.GenerateLabels(references, symbols, zeroPageMap, codeRegions);
+
+            if (verbose is not null)
+            {
+                verbose.BytesProcessed = data.Length;
+                verbose.PassesCompleted = 3;
+            }
+
+            // 2. Create segments from detected code/data regions
+            var segmentCount = 0;
+            if (codeRegions.Count > 0)
+            {
+                var codeRanges = GroupConsecutive(codeRegions);
+                foreach (var (rangeStart, rangeEnd) in codeRanges)
+                {
+                    var name = $"code_{rangeStart:X4}_{rangeEnd:X4}";
+                    segmentManager.Define(new SegmentDefinition(name, SegmentType.Code, rangeStart, rangeEnd, "Auto-detected code region"));
+                    segmentCount++;
+                }
+            }
+            if (dataRegions.Count > 0)
+            {
+                var dataRanges = GroupConsecutive(dataRegions);
+                foreach (var (rangeStart, rangeEnd) in dataRanges)
+                {
+                    var name = $"data_{rangeStart:X4}_{rangeEnd:X4}";
+                    segmentManager.Define(new SegmentDefinition(name, SegmentType.Data, rangeStart, rangeEnd, "Auto-detected data region"));
+                    segmentCount++;
+                }
+            }
+            persistence.Save();
+
+            // 3. Build summary output
+            var totalBytes = dataRegions.Count + codeRegions.Count;
+            var codePct = totalBytes > 0 ? (double)codeRegions.Count / totalBytes * 100 : 0;
+            var dataPct = totalBytes > 0 ? (double)dataRegions.Count / totalBytes * 100 : 0;
+
+            var sb = new StringBuilder();
+            sb.AppendLine("=== Full Analysis Complete ===");
+            sb.AppendLine($"  Code entry points: {references.CodeEntryPoints.Count}");
+            sb.AppendLine($"  Subroutines: {references.SubroutineEntries.Count}");
+            sb.AppendLine($"  Jump targets: {references.JumpTargets.Count}");
+            sb.AppendLine($"  Branch targets: {references.BranchTargets.Count}");
+            sb.AppendLine($"  Data references: {references.AbsoluteDataReferences.Count}");
+            sb.AppendLine($"  Code bytes: {codeRegions.Count} ({codePct:F1}%)");
+            sb.AppendLine($"  Data bytes: {dataRegions.Count} ({dataPct:F1}%)");
+            sb.AppendLine($"  Labels generated: {labelMap.Labels.Count}");
+            sb.AppendLine($"  Segments created: {segmentCount}");
+            sb.AppendLine();
+            sb.AppendLine("Use 'disassemble' with --analyze to view analyzed output.");
+            sb.AppendLine("Use 'segment list' to review auto-created segments.");
+
+            return sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            return $"ERROR: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Group consecutive ushort values into contiguous ranges.
+    /// </summary>
+    private static List<(ushort Start, ushort End)> GroupConsecutive(HashSet<ushort> values)
+    {
+        var sorted = values.OrderBy(v => v).ToList();
+        var ranges = new List<(ushort Start, ushort End)>();
+        if (sorted.Count == 0) return ranges;
+
+        ushort? rangeStart = null;
+        ushort? rangeEnd = null;
+        foreach (var addr in sorted)
+        {
+            if (rangeStart is null) { rangeStart = addr; rangeEnd = addr; }
+            else if (rangeEnd is not null && addr == rangeEnd + 1) { rangeEnd = addr; }
+            else
+            {
+                ranges.Add((rangeStart!.Value, rangeEnd!.Value));
+                rangeStart = addr; rangeEnd = addr;
+            }
+        }
+        if (rangeStart is not null && rangeEnd is not null)
+        {
+            ranges.Add((rangeStart.Value, rangeEnd.Value));
+        }
+        return ranges;
+    }
+
     public static string AnalyzeDisassembly(
         RomSession session,
         SymbolTable symbols,

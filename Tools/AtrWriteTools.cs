@@ -44,7 +44,8 @@ public static class AtrWriteTools
     public static string InjectAtrFile(
         string filePath,
         string name,
-        string input)
+        string input,
+        bool dryRun = false)
     {
         try
         {
@@ -66,16 +67,25 @@ public static class AtrWriteTools
             var inputData = File.ReadAllBytes(input);
 
             // Check if input data fits within the original file's allocated sectors
-            var originalCapacity = match.SectorCount * (geo.SectorSize - 3); // -3 for chain bytes
-            // First sector of a file uses full sector capacity, subsequent use sector - 3
             var fileCapacity = (geo.SectorSize - 3) * match.SectorCount;
             if (inputData.Length > fileCapacity)
             {
                 return $"ERROR: Input file ({inputData.Length} bytes) exceeds available capacity ({fileCapacity} bytes) for {match.SectorCount} sectors.";
             }
 
-            // Build modified ATR (copy-on-write)
             var modifiedPath = GetModifiedPath(filePath);
+
+            if (dryRun)
+            {
+                return $"# DRY RUN: Inject '{name}' into {filePath}\n"
+                    + $"#   File size: {inputData.Length} bytes\n"
+                    + $"#   Target file: {match.FileName}.{match.Extension}\n"
+                    + $"#   Allocated sectors: {match.SectorCount} (capacity: {fileCapacity} bytes)\n"
+                    + $"#   Output: {modifiedPath}\n"
+                    + $"# Run without --dry-run to apply changes.";
+            }
+
+            // Build modified ATR (copy-on-write)
             var modifiedData = (byte[])data.Clone();
 
             // Write new data to the sector chain
@@ -123,7 +133,8 @@ public static class AtrWriteTools
     public static string CreateAtr(
         string output,
         int sectors,
-        string density)
+        string density,
+        bool dryRun = false)
     {
         try
         {
@@ -137,6 +148,17 @@ public static class AtrWriteTools
             var dataBytes = sectorSize == 128
                 ? sectors * 128
                 : 3 * 128 + (sectors - 3) * 256;
+
+            var totalSize = dataBytes + 16; // 16-byte header
+
+            if (dryRun)
+            {
+                return $"# DRY RUN: Would create ATR at {output}\n"
+                    + $"#   Density: {density.ToUpperInvariant()} ({sectorSize} bytes/sector)\n"
+                    + $"#   Sectors: {sectors}\n"
+                    + $"#   Total size: {totalSize} bytes\n"
+                    + $"# Run without --dry-run to apply.";
+            }
 
             var paragraphs = dataBytes / 16;
 
@@ -160,7 +182,7 @@ public static class AtrWriteTools
             fs.Write(header, 0, header.Length);
             fs.Write(new byte[dataBytes], 0, dataBytes);
 
-            return $"Created ATR: {output} ({sectors} × {sectorSize} bytes = {dataBytes + 16} bytes total)";
+            return $"Created ATR: {output} ({sectors} × {sectorSize} bytes = {totalSize} bytes total)";
         }
         catch (Exception ex)
         {
@@ -171,7 +193,8 @@ public static class AtrWriteTools
     public static string WriteAtrSector(
         string filePath,
         string sector,
-        string input)
+        string input,
+        bool dryRun = false)
     {
         try
         {
@@ -196,8 +219,30 @@ public static class AtrWriteTools
             if (inputData.Length != sectorLen)
                 return $"ERROR: Input file size ({inputData.Length} bytes) doesn't match sector size ({sectorLen} bytes).";
 
-            // Copy-on-write: create modified ATR
             var modifiedPath = GetModifiedPath(filePath);
+
+            if (dryRun)
+            {
+                // Show current sector bytes for diff preview
+                var currentSector = AtrParser.ReadSector(data, geo, sectorNum);
+                var diffLines = new System.Text.StringBuilder();
+                diffLines.AppendLine($"# DRY RUN: Write to sector {sectorNum} of {filePath}");
+                diffLines.AppendLine($"#   Sector size: {sectorLen} bytes");
+                diffLines.AppendLine($"#   Input file: {input} ({inputData.Length} bytes)");
+                diffLines.AppendLine($"#   Output: {modifiedPath}");
+                diffLines.AppendLine("#   Changes:");
+                for (var i = 0; i < Math.Min(currentSector.Length, inputData.Length); i++)
+                {
+                    if (currentSector[i] != inputData[i])
+                    {
+                        diffLines.AppendLine($"#     [{i}] {Formatting.HexByte(currentSector[i])} → {Formatting.HexByte(inputData[i])}");
+                    }
+                }
+                diffLines.AppendLine("# Run without --dry-run to apply changes.");
+                return diffLines.ToString();
+            }
+
+            // Copy-on-write: create modified ATR
             var modifiedData = (byte[])data.Clone();
 
             var offset = SectorFileOffset(geo, sectorNum);
@@ -216,7 +261,8 @@ public static class AtrWriteTools
         string filePath,
         string name,
         string input,
-        string? startSector = null)
+        string? startSector = null,
+        bool dryRun = false)
     {
         try
         {
@@ -233,12 +279,8 @@ public static class AtrWriteTools
             var inputData = File.ReadAllBytes(input);
             var parsedName = ParseAtariFilename(name);
 
-            // Copy-on-write
-            var modifiedPath = GetModifiedPath(filePath);
-            var modifiedData = (byte[])data.Clone();
-
             // Check directory for free slot
-            var directory = AtrParser.ReadDirectory(modifiedData);
+            var directory = AtrParser.ReadDirectory(data);
             if (directory.Count >= 64)
                 return "ERROR: Directory is full (64 entries max).";
 
@@ -252,20 +294,32 @@ public static class AtrWriteTools
             var dataPerSector = geo.SectorSize - 3;
             var requiredSectors = (inputData.Length + dataPerSector - 1) / dataPerSector;
 
-            // Check VTOC for free sectors
-            // (Simplified: allocate from end of disk)
             if (startSector is not null)
             {
                 startSectorNum = AddressParser.ParseAddress(startSector);
             }
             else
             {
-                // Find first free sector after directory
                 startSectorNum = 369; // First sector after directory
             }
 
             if (startSectorNum + requiredSectors > geo.SectorCount)
                 return $"ERROR: Not enough free sectors (need {requiredSectors}, have {geo.SectorCount - startSectorNum}).";
+
+            var modifiedPath = GetModifiedPath(filePath);
+
+            if (dryRun)
+            {
+                return $"# DRY RUN: Write file '{name}' to {filePath}\n"
+                    + $"#   File size: {inputData.Length} bytes\n"
+                    + $"#   Required sectors: {requiredSectors} (at {dataPerSector} bytes/sector)\n"
+                    + $"#   Start sector: {startSectorNum}\n"
+                    + $"#   Output: {modifiedPath}\n"
+                    + $"# Run without --dry-run to apply changes.";
+            }
+
+            // Copy-on-write
+            var modifiedData = (byte[])data.Clone();
 
             // Build sector chain and write data
             var bytesWritten = 0;

@@ -57,10 +57,24 @@ public static class SegmentTools
     public static string RemoveSegment(
         SegmentManager segmentManager,
         SessionPersistence persistence,
-        string name)
+        string name,
+        bool dryRun = false)
     {
         try
         {
+            // Check if segment exists
+            var segments = segmentManager.GetOrderedSegments().ToList();
+            var match = segments.FirstOrDefault(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (match is null)
+            {
+                return $"# Warning: no segment named '{name}', nothing to remove.";
+            }
+
+            if (dryRun)
+            {
+                return $"# DRY RUN: Would remove segment '{name}' ({match.Type}) from {Formatting.HexWord(match.Start)}–{Formatting.HexWord(match.End)}.\n# Run without --dry-run to apply.";
+            }
+
             segmentManager.Remove(name);
             persistence.Save();
             return $"Removed segment '{name}'.";
@@ -169,13 +183,32 @@ public static class SegmentTools
 
     public static string ClearSegments(
         SegmentManager segmentManager,
-        SessionPersistence persistence)
+        SessionPersistence persistence,
+        bool dryRun = false)
     {
         try
         {
+            var segments = segmentManager.GetOrderedSegments().ToList();
+            if (segments.Count == 0)
+            {
+                return "# Warning: no segments defined, nothing to clear.";
+            }
+
+            if (dryRun)
+            {
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine("# DRY RUN: Would remove the following segments:");
+                foreach (var seg in segments)
+                {
+                    sb.AppendLine($"#   {seg.Name,-20} {seg.Type,-10} {Formatting.HexWord(seg.Start)}–{Formatting.HexWord(seg.End)}");
+                }
+                sb.AppendLine("# Run without --dry-run to apply.");
+                return sb.ToString();
+            }
+
             segmentManager.Clear();
             persistence.Save();
-            return "All segments cleared.";
+            return $"All {segments.Count} segments cleared.";
         }
         catch (Exception ex)
         {
