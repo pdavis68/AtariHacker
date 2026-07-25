@@ -335,7 +335,8 @@ public static class AnalysisTools
         string start,
         string end,
         string format = "text",
-        VerboseContext? verbose = null)
+        VerboseContext? verbose = null,
+        bool runStructMatch = false)
     {
         try
         {
@@ -372,13 +373,52 @@ public static class AnalysisTools
                 verbose.Confidence = result.Confidence;
             }
 
-            return format.ToLowerInvariant() switch
+            var probeOutput = format.ToLowerInvariant() switch
             {
                 "csv" => result.ToCsv(),
                 "tsv" => result.ToTsv(),
                 "kv" => result.ToKv(),
                 _ => FormatProbeText(result)
             };
+
+            // Optionally run structural matching
+            if (runStructMatch)
+            {
+                var library = StructureLibrary.Load();
+                if (library.Templates.Count > 0)
+                {
+                    var baseAddress = session.BaseAddress ?? 0;
+                    var matches = StructureMatcher.MatchAll(session.Data, baseAddress, startAddr, endAddr, library.Templates);
+
+                    if (matches.Count > 0)
+                    {
+                        var sb = new System.Text.StringBuilder();
+                        sb.AppendLine(probeOutput);
+                        sb.AppendLine();
+                        sb.AppendLine("=== Structural Template Matches ===");
+                        sb.AppendLine($"Found {matches.Count} structural match(es):");
+                        sb.AppendLine();
+
+                        foreach (var match in matches.Take(10))
+                        {
+                            sb.AppendLine($"  Template: {match.TemplateName}");
+                            sb.AppendLine($"  Address:  ${match.Address:X4}");
+                            sb.AppendLine($"  Confidence: {match.Confidence:P1}");
+                            sb.AppendLine();
+                        }
+
+                        if (matches.Count > 10)
+                        {
+                            sb.AppendLine($"  ... and {matches.Count - 10} more matches");
+                            sb.AppendLine("  Use 'struct match' to see full details.");
+                        }
+
+                        return sb.ToString();
+                    }
+                }
+            }
+
+            return probeOutput;
         }
         catch (Exception ex)
         {

@@ -215,13 +215,15 @@ public static class Program
         var probeCommand = new Command("probe", "Analyze a memory range to identify data type");
         var probeStartArg = new Argument<string>("start", "Start address (hex)");
         var probeEndArg = new Argument<string>("end", "End address (hex, inclusive)");
+        var probeStructOpt = new Option<bool>("--struct", "Also run structural template matching");
         probeCommand.AddArgument(probeStartArg);
         probeCommand.AddArgument(probeEndArg);
         probeCommand.AddOption(FormatOption.Option);
-        probeCommand.SetHandler((string start, string end, string format, string? target, string? config, bool verbose) =>
+        probeCommand.AddOption(probeStructOpt);
+        probeCommand.SetHandler((string start, string end, string format, bool runStruct, string? target, string? config, bool verbose) =>
         {
-            Run((s, v) => AnalysisTools.ProbeData(s.Rom, start, end, format, v), target, config, verbose);
-        }, probeStartArg, probeEndArg, FormatOption.Option, targetOption, configOption, verboseOption);
+            Run((s, v) => AnalysisTools.ProbeData(s.Rom, start, end, format, v, runStruct), target, config, verbose);
+        }, probeStartArg, probeEndArg, FormatOption.Option, probeStructOpt, targetOption, configOption, verboseOption);
 
         var callgraphCommand = new Command("callgraph", "Generate a call graph showing subroutine relationships");
         var cgStartOpt = new Option<string?>("--start-address", "Starting address for call graph root (hex)");
@@ -731,6 +733,100 @@ public static class Program
         atrCommand.AddCommand(atrFsCommand);
 
         // ═══════════════════════════════════════════════════════════════════
+        // STRUCTURAL TEMPLATE COMMANDS
+        // ═══════════════════════════════════════════════════════════════════
+
+        var structCommand = new Command("struct", "Manage structural pattern templates");
+
+        // struct list
+        var structListCommand = new Command("list", "List available structural templates");
+        var slTagOpt = new Option<string?>("--tag", "Filter by tag");
+        var slCategoryOpt = new Option<string?>("--category", "Filter by category");
+        var slQueryOpt = new Option<string?>("--query", "Search by name or description text");
+        structListCommand.AddOption(slTagOpt);
+        structListCommand.AddOption(slCategoryOpt);
+        structListCommand.AddOption(slQueryOpt);
+        structListCommand.AddOption(FormatOption.Option);
+        structListCommand.SetHandler((string? tag, string? category, string? query, string format) =>
+        {
+            Console.WriteLine(StructureTools.ListTemplates(tag, category, query, format));
+        }, slTagOpt, slCategoryOpt, slQueryOpt, FormatOption.Option);
+        structCommand.AddCommand(structListCommand);
+
+        // struct define
+        var structDefineCommand = new Command("define", "Define a new structural template from JSON file or inline JSON");
+        var sdSourceArg = new Argument<string>("source", "Path to JSON template file, or inline JSON string");
+        var sdForceOpt = new Option<bool>("--force", "Overwrite existing template with the same name");
+        structDefineCommand.AddArgument(sdSourceArg);
+        structDefineCommand.AddOption(sdForceOpt);
+        structDefineCommand.SetHandler((string source, bool force) =>
+        {
+            Console.WriteLine(StructureTools.DefineTemplate(source, force));
+        }, sdSourceArg, sdForceOpt);
+        structCommand.AddCommand(structDefineCommand);
+
+        // struct remove
+        var structRemoveCommand = new Command("remove", "Delete a structural template by name");
+        var srNameArg = new Argument<string>("name", "Name of the template to remove");
+        structRemoveCommand.AddArgument(srNameArg);
+        structRemoveCommand.SetHandler((string name) =>
+        {
+            Console.WriteLine(StructureTools.RemoveTemplate(name));
+        }, srNameArg);
+        structCommand.AddCommand(structRemoveCommand);
+
+        // struct show
+        var structShowCommand = new Command("show", "Display full details of a named structural template");
+        var ssNameArg = new Argument<string>("name", "Name of the template to display");
+        structShowCommand.AddArgument(ssNameArg);
+        structShowCommand.SetHandler((string name) =>
+        {
+            Console.WriteLine(StructureTools.ShowTemplate(name));
+        }, ssNameArg);
+        structCommand.AddCommand(structShowCommand);
+
+        // struct match
+        var structMatchCommand = new Command("match", "Scan a memory range for structural template matches");
+        var smStartArg = new Argument<string>("start", "Start address (hex)");
+        var smEndArg = new Argument<string>("end", "End address (hex, inclusive)");
+        var smTemplateOpt = new Option<string?>("--template", "Match against a specific template (default: all)");
+        structMatchCommand.AddArgument(smStartArg);
+        structMatchCommand.AddArgument(smEndArg);
+        structMatchCommand.AddOption(smTemplateOpt);
+        structMatchCommand.AddOption(FormatOption.Option);
+        structMatchCommand.SetHandler((string start, string end, string? templateName, string format, string? target, string? config, bool verbose) =>
+        {
+            Run((s, v) => StructureTools.MatchTemplates(s.Rom, start, end, templateName, format, v), target, config, verbose);
+        }, smStartArg, smEndArg, smTemplateOpt, FormatOption.Option, targetOption, configOption, verboseOption);
+        structCommand.AddCommand(structMatchCommand);
+
+        // struct import
+        var structImportCommand = new Command("import", "Import structural templates from a JSON file");
+        var siPathArg = new Argument<string>("path", "Path to the JSON template file");
+        var siForceOpt = new Option<bool>("--force", "Overwrite existing templates with the same name");
+        structImportCommand.AddArgument(siPathArg);
+        structImportCommand.AddOption(siForceOpt);
+        structImportCommand.SetHandler((string path, bool force) =>
+        {
+            Console.WriteLine(StructureTools.ImportTemplates(path, force));
+        }, siPathArg, siForceOpt);
+        structCommand.AddCommand(structImportCommand);
+
+        // struct export
+        var structExportCommand = new Command("export", "Export structural templates to a JSON file");
+        var seOutputArg = new Argument<string>("output", "Output path for the JSON file");
+        var seTagOpt = new Option<string?>("--tag", "Export only templates with this tag");
+        var seCategoryOpt = new Option<string?>("--category", "Export only templates in this category");
+        structExportCommand.AddArgument(seOutputArg);
+        structExportCommand.AddOption(seTagOpt);
+        structExportCommand.AddOption(seCategoryOpt);
+        structExportCommand.SetHandler((string output, string? tag, string? category) =>
+        {
+            Console.WriteLine(StructureTools.ExportTemplates(tag, category, output));
+        }, seOutputArg, seTagOpt, seCategoryOpt);
+        structCommand.AddCommand(structExportCommand);
+
+        // ═══════════════════════════════════════════════════════════════════
         // DIFF
         // ═══════════════════════════════════════════════════════════════════
 
@@ -782,6 +878,7 @@ public static class Program
         rootCommand.AddCommand(symbolCommand);
         rootCommand.AddCommand(segmentCommand);
         rootCommand.AddCommand(patternsCommand);
+        rootCommand.AddCommand(structCommand);
         rootCommand.AddCommand(zpCommand);
         rootCommand.AddCommand(labelsCommand);
         rootCommand.AddCommand(atrCommand);
