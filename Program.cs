@@ -299,12 +299,31 @@ public static class Program
 
         var xrefCommand = new Command("xref", "Find locations that reference a target address");
         var xrefAddrArg = new Argument<string>("address", "Target address to cross-reference");
+        var xrefTypeOpt = new Option<string?>("--type", "Filter by access type: read, write, read-write, or execute");
         xrefCommand.AddArgument(xrefAddrArg);
         xrefCommand.AddOption(FormatOption.Option);
-        xrefCommand.SetHandler((string addr, string format, string? target, string? config, bool verbose) =>
+        xrefCommand.AddOption(xrefTypeOpt);
+        xrefCommand.SetHandler((string addr, string format, string? typeFilter, string? target, string? config, bool verbose) =>
         {
-            Run((s, v) => XRefTool.XRef(s.Rom, s.Symbols, s.ZeroPage, addr, format), target, config, verbose);
-        }, xrefAddrArg, FormatOption.Option, targetOption, configOption, verboseOption);
+            Run((s, v) => XRefTool.XRef(s.Rom, s.Symbols, s.ZeroPage, addr, format, typeFilter), target, config, verbose);
+        }, xrefAddrArg, FormatOption.Option, xrefTypeOpt, targetOption, configOption, verboseOption);
+
+        // ─── trace-access: Data flow tracing ────────────────────────────────
+
+        var traceAccessCommand = new Command("trace-access", "Statically trace data flow through memory for a target address");
+        var taAddrArg = new Argument<string>("address", "Target memory address to trace");
+        var taDirectionOpt = new Option<string>("--direction", () => "forward", "Trace direction: forward or backward");
+        var taDepthOpt = new Option<int>("--depth", () => 10, "Maximum trace depth");
+        var taBudgetOpt = new Option<int>("--max-instructions", () => 1000, "Instruction budget for the trace");
+        traceAccessCommand.AddArgument(taAddrArg);
+        traceAccessCommand.AddOption(taDirectionOpt);
+        traceAccessCommand.AddOption(taDepthOpt);
+        traceAccessCommand.AddOption(taBudgetOpt);
+        traceAccessCommand.AddOption(FormatOption.Option);
+        traceAccessCommand.SetHandler((string addr, string direction, int depth, int budget, string format, string? target, string? config, bool verbose) =>
+        {
+            Run((s, v) => DataFlowTool.TraceAccess(s.Rom, s.Symbols, s.ZeroPage, addr, direction, depth, budget, format), target, config, verbose);
+        }, taAddrArg, taDirectionOpt, taDepthOpt, taBudgetOpt, FormatOption.Option, targetOption, configOption, verboseOption);
 
         // ═══════════════════════════════════════════════════════════════════
         // SYMBOL COMMANDS
@@ -875,6 +894,7 @@ public static class Program
         rootCommand.AddCommand(analyzeFullCommand);
         rootCommand.AddCommand(traceCommand);
         rootCommand.AddCommand(xrefCommand);
+        rootCommand.AddCommand(traceAccessCommand);
         rootCommand.AddCommand(symbolCommand);
         rootCommand.AddCommand(segmentCommand);
         rootCommand.AddCommand(patternsCommand);
