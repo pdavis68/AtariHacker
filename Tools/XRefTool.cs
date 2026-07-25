@@ -10,7 +10,8 @@ public static class XRefTool
         RomSession session,
         SymbolTable symbols,
         ZeroPageMap zeroPageMap,
-        string address)
+        string address,
+        string format = "text")
     {
         try
         {
@@ -20,7 +21,8 @@ public static class XRefTool
             }
 
             var target = AddressParser.ParseAddress(address);
-            var hits = new SortedDictionary<string, List<string>>(StringComparer.Ordinal);
+            // Collect hits as structured data regardless of format
+            var rows = new List<(ushort Address, string Mnemonic, string Operand, int FileOffset)>();
 
             foreach (var start in GetScanStarts(session))
             {
@@ -41,45 +43,115 @@ public static class XRefTool
                     if (matches)
                     {
                         var operand = DisassemblerTool.FormatOperand(entry, session.Data, position, memoryAddress, symbols, zeroPageMap);
-                        var line = $"  {Formatting.HexWord(memoryAddress)}  {entry.Mnemonic}{(string.IsNullOrWhiteSpace(operand) ? string.Empty : " " + operand)}";
-                        if (!hits.TryGetValue(entry.Mnemonic, out var list))
-                        {
-                            list = [];
-                            hits[entry.Mnemonic] = list;
-                        }
-
-                        list.Add(line);
+                        rows.Add((memoryAddress, entry.Mnemonic, operand, position));
                     }
 
                     position += entry.Bytes;
                 }
             }
 
-            if (hits.Count == 0)
+            if (rows.Count == 0)
             {
-                return $"No cross-references to {Formatting.HexWord(target)} were found.";
+                return format.ToLowerInvariant() switch
+                {
+                    "csv" => OutputFormatter.FormatCsv(
+                        new[] { "address", "mnemonic", "operand", "file_offset" },
+                        Array.Empty<string[]>()),
+                    "tsv" => OutputFormatter.FormatTsv(
+                        new[] { "address", "mnemonic", "operand", "file_offset" },
+                        Array.Empty<string[]>()),
+                    "kv" => "",
+                    _ => $"No cross-references to {Formatting.HexWord(target)} were found."
+                };
             }
 
-            var headerSymbol = SymbolResolver.Resolve(target, symbols, zeroPageMap);
-            var lines = new List<string> { $"Cross-references to {Formatting.WithSymbol(Formatting.HexWord(target), headerSymbol)}:" };
-            foreach (var group in hits)
+            return format.ToLowerInvariant() switch
             {
-                lines.Add($"{group.Key}:");
-                lines.AddRange(group.Value);
-                lines.Add(string.Empty);
-            }
-
-            if (lines[^1] == string.Empty)
-            {
-                lines.RemoveAt(lines.Count - 1);
-            }
-
-            return string.Join('\n', lines);
+                "csv" => FormatXRefCsv(rows),
+                "tsv" => FormatXRefTsv(rows),
+                "kv" => FormatXRefKv(rows),
+                _ => FormatXRefText(rows, target, symbols, zeroPageMap)
+            };
         }
         catch (Exception ex)
         {
             return $"ERROR: {ex.Message}";
         }
+    }
+
+    private static string FormatXRefText(
+        List<(ushort Address, string Mnemonic, string Operand, int FileOffset)> rows,
+        ushort target,
+        SymbolTable symbols,
+        ZeroPageMap zeroPageMap)
+    {
+        // Group by mnemonic for text output
+        var grouped = new SortedDictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var (addr, mnemonic, operand, _) in rows)
+        {
+            var line = $"  {Formatting.HexWord(addr)}  {mnemonic}{(string.IsNullOrWhiteSpace(operand) ? string.Empty : " " + operand)}";
+            if (!grouped.TryGetValue(mnemonic, out var list))
+            {
+                list = [];
+                grouped[mnemonic] = list;
+            }
+            list.Add(line);
+        }
+
+        var headerSymbol = SymbolResolver.Resolve(target, symbols, zeroPageMap);
+        var lines = new List<string> { $"Cross-references to {Formatting.WithSymbol(Formatting.HexWord(target), headerSymbol)}:" };
+        foreach (var group in grouped)
+        {
+            lines.Add($"{group.Key}:");
+            lines.AddRange(group.Value);
+            lines.Add(string.Empty);
+        }
+
+        if (lines[^1] == string.Empty)
+        {
+            lines.RemoveAt(lines.Count - 1);
+        }
+
+        return string.Join('\n', lines);
+    }
+
+    private static string FormatXRefCsv(List<(ushort Address, string Mnemonic, string Operand, int FileOffset)> rows)
+    {
+        var headers = new[] { "address", "mnemonic", "operand", "file_offset" };
+        var data = rows.Select(r => new[]
+        {
+            Formatting.HexWord(r.Address),
+            r.Mnemonic,
+            r.Operand,
+            Formatting.HexOffset(r.FileOffset)
+        }).ToArray();
+        return OutputFormatter.FormatCsv(headers, data);
+    }
+
+    private static string FormatXRefTsv(List<(ushort Address, string Mnemonic, string Operand, int FileOffset)> rows)
+    {
+        var headers = new[] { "address", "mnemonic", "operand", "file_offset" };
+        var data = rows.Select(r => new[]
+        {
+            Formatting.HexWord(r.Address),
+            r.Mnemonic,
+            r.Operand,
+            Formatting.HexOffset(r.FileOffset)
+        }).ToArray();
+        return OutputFormatter.FormatTsv(headers, data);
+    }
+
+    private static string FormatXRefKv(List<(ushort Address, string Mnemonic, string Operand, int FileOffset)> rows)
+    {
+        var keys = new[] { "address", "mnemonic", "operand", "file_offset" };
+        var data = rows.Select(r => new[]
+        {
+            Formatting.HexWord(r.Address),
+            r.Mnemonic,
+            r.Operand,
+            Formatting.HexOffset(r.FileOffset)
+        }).ToArray();
+        return OutputFormatter.FormatKv(keys, data);
     }
 
     private static IEnumerable<int> GetScanStarts(RomSession session)

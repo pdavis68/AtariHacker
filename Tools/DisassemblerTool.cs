@@ -221,8 +221,10 @@ public static class DisassemblerTool
         // Keep track of which addresses we've emitted labels for
         var emittedLabels = new HashSet<ushort>();
 
-        foreach (var instr in instructions)
+        var i = 0;
+        while (i < instructions.Count)
         {
+            var instr = instructions[i];
             var addr = instr.Address;
 
             // Check for segment boundary
@@ -312,33 +314,33 @@ public static class DisassemblerTool
                 emittedLabels.Add(addr.Value);
             }
 
-            // Emit instruction
-            if (instr.IsData)
+            // Emit instruction.
+            // Use the analysis codeRegions to determine if this byte is code or data.
+            // instr.IsData only catches illegal opcodes; valid opcodes in data regions
+            // (e.g. $00=BRK, $30=BMI in ATASCII text) must be caught by the analysis.
+            var isData = instr.IsData || (addr is not null && !codeRegions.Contains(addr.Value));
+            if (isData)
             {
-                // Check if this data looks like ATASCII text
-                if (instr.Bytes.Length == 1 && IsAtasciiPrintable(instr.Bytes[0]))
+                // Check if this data looks like ATASCII text — if so, group contiguous
+                // ATASCII bytes into a single .byte line with comma-separated values.
+                // Check Bytes[0] regardless of instruction length (valid opcodes in
+                // data regions may have Bytes.Length > 1).
+                if (instr.Bytes.Length >= 1 && IsAtasciiPrintable(instr.Bytes[0]))
                 {
-                    var atasciiChar = AtasciiDecoder.DecodeByte(instr.Bytes[0]);
-                    if (instr.Bytes[0] == 0x9B)
-                    {
-                        lines.Add($"\t.byte\t$9B\t; ATASCII EOL");
-                    }
-                    else if (atasciiChar >= 0x20 && atasciiChar <= 0x7E)
-                    {
-                        lines.Add($"\t.byte\t\"{atasciiChar}\"");
-                    }
-                    else
-                    {
-                        lines.Add($"\t.byte\t{Formatting.HexByte(instr.Bytes[0])}");
-                    }
+                    var (grouped, consumed) = FormatAtasciiGroup(instructions, i, labelMap, procedureEntries, emittedLabels);
+                    lines.Add(grouped);
+                    i += consumed;
+                    continue;
                 }
-                else
-                {
-                    var line = $"\t.byte\t{instr.Operand}";
-                    if (!string.IsNullOrEmpty(instr.Comment))
-                        line += $"\t{instr.Comment}";
-                    lines.Add(line);
-                }
+
+                // When codeRegions overrides IsData for a valid opcode, the Operand
+                // field holds the disassembled operand (e.g. "$00" for ADC $00), not
+                // the raw bytes. Always emit raw hex values from Bytes[] for accuracy.
+                var hexBytes = string.Join(", ", instr.Bytes.Select(b => Formatting.HexByte(b)));
+                var line = $"\t.byte\t{hexBytes}";
+                if (!string.IsNullOrEmpty(instr.Comment))
+                    line += $"\t{instr.Comment}";
+                lines.Add(line);
             }
             else
             {
@@ -349,6 +351,8 @@ public static class DisassemblerTool
                     line += $"\t{instr.Comment}";
                 lines.Add(line);
             }
+
+            i++;
         }
 
         // Close final procedure
@@ -802,6 +806,103 @@ public static class DisassemblerTool
     private static bool IsAtasciiPrintable(byte value)
     {
         return (value >= 0x20 && value <= 0x7E) || value == 0x9B || (value >= 0xA0 && value <= 0xFE);
+    }
+
+    /// <summary>
+    /// Scans ahead from the given index to group contiguous ATASCII data bytes
+    /// into a single .byte directive with comma-separated values.
+    /// Stops at code instructions, labels, procedure entries, or non-printable data.
+    /// Iterates through all bytes of multi-byte instructions (valid opcodes that
+    /// were overridden as data by the codeRegions analysis).
+    /// </summary>
+    private static (string Line, int Consumed) FormatAtasciiGroup(
+        List<DisassembledLine> instructions,
+        int startIndex,
+        LabelMap labelMap,
+        HashSet<ushort> procedureEntries,
+        HashSet<ushort> emittedLabels)
+    {
+        var parts = new List<string>();
+        var endIndex = startIndex;
+
+        // Scan ahead to find the contiguous ATASCII run
+        while (endIndex < instructions.Count)
+        {
+            var candidate = instructions[endIndex];
+
+            // Stop at label boundaries (addresses referenced elsewhere)
+            if (candidate.Address is not null &&
+                endIndex > startIndex &&
+                (labelMap.Labels.ContainsKey(candidate.Address.Value) ||
+                 procedureEntries.Contains(candidate.Address.Value)))
+                break;
+
+            // Check each byte of this instruction — all must be ATASCII printable
+            var allPrintable = true;
+            foreach (var b in candidate.Bytes)
+            {
+                if (!IsAtasciiPrintable(b))
+                {
+                    allPrintable = false;
+                    break;
+                }
+            }
+            if (!allPrintable)
+                break;
+
+            endIndex++;
+        }
+
+        // Build the .byte line with comma-separated values from all bytes
+        for (var j = startIndex; j < endIndex; j++)
+        {
+            foreach (var b in instructions[j].Bytes)
+            {
+                var atasciiChar = AtasciiDecoder.DecodeByte(b);
+
+                if (b == 0x9B)
+                {
+                    parts.Add("$9B");
+                }
+                else if (atasciiChar >= 0x20 && atasciiChar <= 0x7E)
+                {
+                    var escaped = atasciiChar switch
+                    {
+                        '"' => "\\\"",
+                        '\\' => "\\\\",
+                        _ => ((char)atasciiChar).ToString()
+                    };
+                    parts.Add($"\"{escaped}\"");
+                }
+                else
+                {
+                    parts.Add(Formatting.HexByte(b));
+                }
+            }
+
+            // Mark any labels at these addresses as emitted so they're not re-emitted
+            var addr = instructions[j].Address;
+            if (addr is not null)
+            {
+                emittedLabels.Add(addr.Value);
+            }
+        }
+
+        var consumed = endIndex - startIndex;
+        if (consumed == 0)
+        {
+            // Fallback: emit the first byte of the starting instruction
+            var b = instructions[startIndex].Bytes[0];
+            return ($"\t.byte\t{Formatting.HexByte(b)}", 1);
+        }
+
+        var line = "\t.byte\t" + string.Join(", ", parts);
+        // Add ATASCII EOL comment if the last value is $9B
+        if (parts.Count > 0 && parts[^1] == "$9B")
+        {
+            line += "\t; ATASCII EOL";
+        }
+        return (line, consumed);
     }
 
     /// <summary>

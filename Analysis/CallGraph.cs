@@ -216,6 +216,96 @@ public static class CallGraph
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Format the call graph as CSV rows (caller, callee, depth, address).
+    /// </summary>
+    public static string FormatCsv(
+        Dictionary<ushort, HashSet<ushort>> graph,
+        SymbolTable symbols,
+        ZeroPageMap zeroPageMap)
+    {
+        var rows = new List<string[]>();
+        foreach (var kvp in graph)
+        {
+            var callerLabel = GetLabel(kvp.Key, symbols, zeroPageMap);
+            if (kvp.Value.Count == 0)
+            {
+                rows.Add(new[] { callerLabel, "", "0", Formatting.HexWord(kvp.Key) });
+            }
+            else
+            {
+                foreach (var callee in kvp.Value)
+                {
+                    var calleeLabel = GetLabel(callee, symbols, zeroPageMap);
+                    rows.Add(new[] { callerLabel, calleeLabel, "1", Formatting.HexWord(kvp.Key) });
+                }
+            }
+        }
+
+        var headers = new[] { "caller", "callee", "depth", "address" };
+        return OutputFormatter.FormatCsv(headers, rows.ToArray());
+    }
+
+    /// <summary>
+    /// Format the call graph as TSV rows.
+    /// </summary>
+    public static string FormatTsv(
+        Dictionary<ushort, HashSet<ushort>> graph,
+        SymbolTable symbols,
+        ZeroPageMap zeroPageMap)
+    {
+        var rows = new List<string[]>();
+        foreach (var kvp in graph)
+        {
+            var callerLabel = GetLabel(kvp.Key, symbols, zeroPageMap);
+            if (kvp.Value.Count == 0)
+            {
+                rows.Add(new[] { callerLabel, "", "0", Formatting.HexWord(kvp.Key) });
+            }
+            else
+            {
+                foreach (var callee in kvp.Value)
+                {
+                    var calleeLabel = GetLabel(callee, symbols, zeroPageMap);
+                    rows.Add(new[] { callerLabel, calleeLabel, "1", Formatting.HexWord(kvp.Key) });
+                }
+            }
+        }
+
+        var headers = new[] { "caller", "callee", "depth", "address" };
+        return OutputFormatter.FormatTsv(headers, rows.ToArray());
+    }
+
+    /// <summary>
+    /// Format the call graph as key=value pairs.
+    /// </summary>
+    public static string FormatKv(
+        Dictionary<ushort, HashSet<ushort>> graph,
+        SymbolTable symbols,
+        ZeroPageMap zeroPageMap)
+    {
+        var rows = new List<string[]>();
+        foreach (var kvp in graph)
+        {
+            var callerLabel = GetLabel(kvp.Key, symbols, zeroPageMap);
+            if (kvp.Value.Count == 0)
+            {
+                rows.Add(new[] { callerLabel, "", "0", Formatting.HexWord(kvp.Key) });
+            }
+            else
+            {
+                foreach (var callee in kvp.Value)
+                {
+                    var calleeLabel = GetLabel(callee, symbols, zeroPageMap);
+                    rows.Add(new[] { callerLabel, calleeLabel, "1", Formatting.HexWord(kvp.Key) });
+                }
+            }
+        }
+
+        var keys = new[] { "caller", "callee", "depth", "address" };
+        return OutputFormatter.FormatKv(keys, rows.ToArray());
+    }
+
     // ─── Helpers ───────────────────────────────────────────────────────────
 
     private static string GetLabel(ushort address, SymbolTable symbols, ZeroPageMap zeroPageMap)

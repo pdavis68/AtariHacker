@@ -9,7 +9,53 @@ namespace AtariHacker.Analysis;
 public sealed record ProbeResult(
     string Description,
     string Confidence,  // "High", "Medium", "Low"
-    List<string> Details);
+    List<string> Details)
+{
+    public string ToCsv()
+    {
+        var headers = new[] { "description", "confidence", "details" };
+        var rows = new[]
+        {
+            new[]
+            {
+                Description,
+                Confidence,
+                string.Join("; ", Details)
+            }
+        };
+        return OutputFormatter.FormatCsv(headers, rows);
+    }
+
+    public string ToTsv()
+    {
+        var headers = new[] { "description", "confidence", "details" };
+        var rows = new[]
+        {
+            new[]
+            {
+                Description,
+                Confidence,
+                string.Join("; ", Details)
+            }
+        };
+        return OutputFormatter.FormatTsv(headers, rows);
+    }
+
+    public string ToKv()
+    {
+        var keys = new[] { "description", "confidence", "details" };
+        var rows = new[]
+        {
+            new[]
+            {
+                Description,
+                Confidence,
+                string.Join("; ", Details)
+            }
+        };
+        return OutputFormatter.FormatKv(keys, rows);
+    }
+}
 
 /// <summary>
 /// Automatic data type detection heuristics for memory ranges.

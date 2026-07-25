@@ -71,7 +71,7 @@ public static class SegmentTools
         }
     }
 
-    public static string ListSegments(SegmentManager segmentManager)
+    public static string ListSegments(SegmentManager segmentManager, string format = "text")
     {
         try
         {
@@ -81,34 +81,90 @@ public static class SegmentTools
                 return "No segments defined.";
             }
 
-            var sb = new StringBuilder();
-            sb.AppendLine($"Segments ({segments.Count} defined):");
-            sb.AppendLine();
-
-            foreach (var seg in segments)
+            return format.ToLowerInvariant() switch
             {
-                var comment = string.IsNullOrWhiteSpace(seg.Comment) ? string.Empty : $"  ; {seg.Comment}";
-                sb.AppendLine($"  {seg.Name,-20} {seg.Type,-10} {Formatting.HexWord(seg.Start)}–{Formatting.HexWord(seg.End)}{comment}");
-            }
-
-            // Show gaps
-            var gaps = segmentManager.FindGaps();
-            if (gaps.Count > 0)
-            {
-                sb.AppendLine();
-                sb.AppendLine("Gaps between segments:");
-                foreach (var gap in gaps)
-                {
-                    sb.AppendLine($"  {Formatting.HexWord(gap.Start)}–{Formatting.HexWord(gap.End)} ({(gap.End - gap.Start + 1)} bytes)");
-                }
-            }
-
-            return sb.ToString();
+                "csv" => FormatSegmentsCsv(segments),
+                "tsv" => FormatSegmentsTsv(segments),
+                "kv" => FormatSegmentsKv(segments),
+                _ => FormatSegmentsText(segments, segmentManager)
+            };
         }
         catch (Exception ex)
         {
             return $"ERROR: {ex.Message}";
         }
+    }
+
+    private static string FormatSegmentsText(IReadOnlyList<SegmentDefinition> segments, SegmentManager segmentManager)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"Segments ({segments.Count} defined):");
+        sb.AppendLine();
+
+        foreach (var seg in segments)
+        {
+            var comment = string.IsNullOrWhiteSpace(seg.Comment) ? string.Empty : $"  ; {seg.Comment}";
+            sb.AppendLine($"  {seg.Name,-20} {seg.Type,-10} {Formatting.HexWord(seg.Start)}–{Formatting.HexWord(seg.End)}{comment}");
+        }
+
+        // Show gaps
+        var gaps = segmentManager.FindGaps();
+        if (gaps.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Gaps between segments:");
+            foreach (var gap in gaps)
+            {
+                sb.AppendLine($"  {Formatting.HexWord(gap.Start)}–{Formatting.HexWord(gap.End)} ({(gap.End - gap.Start + 1)} bytes)");
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    private static string FormatSegmentsCsv(IReadOnlyList<SegmentDefinition> segments)
+    {
+        var headers = new[] { "name", "type", "start", "end", "size", "comment" };
+        var rows = segments.Select(seg => new[]
+        {
+            seg.Name,
+            seg.Type.ToString(),
+            Formatting.HexWord(seg.Start),
+            Formatting.HexWord(seg.End),
+            (seg.End - seg.Start + 1).ToString(),
+            seg.Comment ?? string.Empty
+        }).ToArray();
+        return OutputFormatter.FormatCsv(headers, rows);
+    }
+
+    private static string FormatSegmentsTsv(IReadOnlyList<SegmentDefinition> segments)
+    {
+        var headers = new[] { "name", "type", "start", "end", "size", "comment" };
+        var rows = segments.Select(seg => new[]
+        {
+            seg.Name,
+            seg.Type.ToString(),
+            Formatting.HexWord(seg.Start),
+            Formatting.HexWord(seg.End),
+            (seg.End - seg.Start + 1).ToString(),
+            seg.Comment ?? string.Empty
+        }).ToArray();
+        return OutputFormatter.FormatTsv(headers, rows);
+    }
+
+    private static string FormatSegmentsKv(IReadOnlyList<SegmentDefinition> segments)
+    {
+        var keys = new[] { "name", "type", "start", "end", "size", "comment" };
+        var rows = segments.Select(seg => new[]
+        {
+            seg.Name,
+            seg.Type.ToString(),
+            Formatting.HexWord(seg.Start),
+            Formatting.HexWord(seg.End),
+            (seg.End - seg.Start + 1).ToString(),
+            seg.Comment ?? string.Empty
+        }).ToArray();
+        return OutputFormatter.FormatKv(keys, rows);
     }
 
     public static string ClearSegments(

@@ -93,7 +93,8 @@ public static class AnalysisTools
     public static string ProbeData(
         RomSession session,
         string start,
-        string end)
+        string end,
+        string format = "text")
     {
         try
         {
@@ -125,20 +126,30 @@ public static class AnalysisTools
 
             var result = DataProber.ProbeData(session.Data, probeStart, probeEnd);
 
-            var sb = new StringBuilder();
-            sb.AppendLine(result.Description);
-            sb.AppendLine($"  Confidence: {result.Confidence}");
-            foreach (var detail in result.Details)
+            return format.ToLowerInvariant() switch
             {
-                sb.AppendLine($"  {detail}");
-            }
-
-            return sb.ToString();
+                "csv" => result.ToCsv(),
+                "tsv" => result.ToTsv(),
+                "kv" => result.ToKv(),
+                _ => FormatProbeText(result)
+            };
         }
         catch (Exception ex)
         {
             return $"ERROR: {ex.Message}";
         }
+    }
+
+    private static string FormatProbeText(ProbeResult result)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine(result.Description);
+        sb.AppendLine($"  Confidence: {result.Confidence}");
+        foreach (var detail in result.Details)
+        {
+            sb.AppendLine($"  {detail}");
+        }
+        return sb.ToString();
     }
 
     public static string GenerateCallGraph(
@@ -171,6 +182,9 @@ public static class AnalysisTools
             return format.ToLowerInvariant() switch
             {
                 "text" => CallGraph.FormatText(graph, symbols, zeroPageMap),
+                "csv" => CallGraph.FormatCsv(graph, symbols, zeroPageMap),
+                "tsv" => CallGraph.FormatTsv(graph, symbols, zeroPageMap),
+                "kv" => CallGraph.FormatKv(graph, symbols, zeroPageMap),
                 _ => CallGraph.FormatMermaid(graph, symbols, zeroPageMap)
             };
         }
@@ -183,7 +197,8 @@ public static class AnalysisTools
     public static string AnalyzeCoverage(
         RomSession session,
         string start,
-        string end)
+        string end,
+        string format = "text")
     {
         try
         {
@@ -199,7 +214,14 @@ public static class AnalysisTools
             var (codeRegions, dataRegions) = DisassemblyAnalyzer.TraceCodeRegions(session.Data, references, session.Segments, session.BaseAddress);
 
             var result = CodeCoverage.AnalyzeCoverage(session.Data, references, codeRegions, dataRegions, startAddr, endAddr);
-            return CodeCoverage.FormatCoverage(result);
+
+            return format.ToLowerInvariant() switch
+            {
+                "csv" => result.ToCsv(),
+                "tsv" => result.ToTsv(),
+                "kv" => result.ToKv(),
+                _ => CodeCoverage.FormatCoverage(result)
+            };
         }
         catch (Exception ex)
         {

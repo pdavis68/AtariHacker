@@ -1,5 +1,6 @@
 ﻿using System.CommandLine;
 using AtariHacker.Atari;
+using AtariHacker.Helpers;
 using AtariHacker.State;
 using AtariHacker.Tools;
 
@@ -182,7 +183,7 @@ public static class Program
         var analyzeCommand = new Command("analyze", "Perform multi-pass analysis to build reference graph and identify code/data regions");
         var anStartOpt = new Option<string?>("--start-address", "Starting address for analysis (hex)");
         var anBytesOpt = new Option<int?>("--bytes", "Number of bytes to analyze");
-        var anFormatOpt = new Option<string>("--format", () => "summary", "Output format: summary, graph, labels, or full");
+        var anFormatOpt = new Option<string>("--format", () => "summary", "Output format: summary, graph, labels, full, csv, tsv, or kv");
         analyzeCommand.AddOption(anStartOpt);
         analyzeCommand.AddOption(anBytesOpt);
         analyzeCommand.AddOption(anFormatOpt);
@@ -196,15 +197,16 @@ public static class Program
         var probeEndArg = new Argument<string>("end", "End address (hex, inclusive)");
         probeCommand.AddArgument(probeStartArg);
         probeCommand.AddArgument(probeEndArg);
-        probeCommand.SetHandler((string start, string end, string? target, string? config) =>
+        probeCommand.AddOption(FormatOption.Option);
+        probeCommand.SetHandler((string start, string end, string format, string? target, string? config) =>
         {
-            Run(s => AnalysisTools.ProbeData(s.Rom, start, end), target, config);
-        }, probeStartArg, probeEndArg, targetOption, configOption);
+            Run(s => AnalysisTools.ProbeData(s.Rom, start, end, format), target, config);
+        }, probeStartArg, probeEndArg, FormatOption.Option, targetOption, configOption);
 
         var callgraphCommand = new Command("callgraph", "Generate a call graph showing subroutine relationships");
         var cgStartOpt = new Option<string?>("--start-address", "Starting address for call graph root (hex)");
         var cgDepthOpt = new Option<int>("--depth", () => 3, "Maximum call depth");
-        var cgFormatOpt = new Option<string>("--format", () => "mermaid", "Output format: mermaid or text");
+        var cgFormatOpt = new Option<string>("--format", () => "mermaid", "Output format: mermaid, text, csv, tsv, or kv");
         callgraphCommand.AddOption(cgStartOpt);
         callgraphCommand.AddOption(cgDepthOpt);
         callgraphCommand.AddOption(cgFormatOpt);
@@ -218,10 +220,11 @@ public static class Program
         var covEndArg = new Argument<string>("end", "End address (hex, inclusive)");
         coverageCommand.AddArgument(covStartArg);
         coverageCommand.AddArgument(covEndArg);
-        coverageCommand.SetHandler((string start, string end, string? target, string? config) =>
+        coverageCommand.AddOption(FormatOption.Option);
+        coverageCommand.SetHandler((string start, string end, string format, string? target, string? config) =>
         {
-            Run(s => AnalysisTools.AnalyzeCoverage(s.Rom, start, end), target, config);
-        }, covStartArg, covEndArg, targetOption, configOption);
+            Run(s => AnalysisTools.AnalyzeCoverage(s.Rom, start, end, format), target, config);
+        }, covStartArg, covEndArg, FormatOption.Option, targetOption, configOption);
 
         // ═══════════════════════════════════════════════════════════════════
         // CONTROL FLOW & XREF
@@ -234,18 +237,20 @@ public static class Program
         traceCommand.AddArgument(traceAddrArg);
         traceCommand.AddOption(traceDepthOpt);
         traceCommand.AddOption(traceBudgetOpt);
-        traceCommand.SetHandler((string addr, int depth, int budget, string? target, string? config) =>
+        traceCommand.AddOption(FormatOption.Option);
+        traceCommand.SetHandler((string addr, int depth, int budget, string format, string? target, string? config) =>
         {
-            Run(s => ControlFlowTool.TraceControlFlow(s.Rom, s.Symbols, s.ZeroPage, addr, depth, budget), target, config);
-        }, traceAddrArg, traceDepthOpt, traceBudgetOpt, targetOption, configOption);
+            Run(s => ControlFlowTool.TraceControlFlow(s.Rom, s.Symbols, s.ZeroPage, addr, depth, budget, format), target, config);
+        }, traceAddrArg, traceDepthOpt, traceBudgetOpt, FormatOption.Option, targetOption, configOption);
 
         var xrefCommand = new Command("xref", "Find locations that reference a target address");
         var xrefAddrArg = new Argument<string>("address", "Target address to cross-reference");
         xrefCommand.AddArgument(xrefAddrArg);
-        xrefCommand.SetHandler((string addr, string? target, string? config) =>
+        xrefCommand.AddOption(FormatOption.Option);
+        xrefCommand.SetHandler((string addr, string format, string? target, string? config) =>
         {
-            Run(s => XRefTool.XRef(s.Rom, s.Symbols, s.ZeroPage, addr), target, config);
-        }, xrefAddrArg, targetOption, configOption);
+            Run(s => XRefTool.XRef(s.Rom, s.Symbols, s.ZeroPage, addr, format), target, config);
+        }, xrefAddrArg, FormatOption.Option, targetOption, configOption);
 
         // ═══════════════════════════════════════════════════════════════════
         // SYMBOL COMMANDS
@@ -288,10 +293,11 @@ public static class Program
         var symListFilterOpt = new Option<string?>("--filter", "Optional substring filter");
         symbolListCommand.AddOption(symListHwOpt);
         symbolListCommand.AddOption(symListFilterOpt);
-        symbolListCommand.SetHandler((bool includeHw, string? filter, string? target, string? config) =>
+        symbolListCommand.AddOption(FormatOption.Option);
+        symbolListCommand.SetHandler((bool includeHw, string? filter, string format, string? target, string? config) =>
         {
-            Run(s => SymbolTools.ListSymbols(s.Rom, s.Symbols, includeHw, filter), target, config);
-        }, symListHwOpt, symListFilterOpt, targetOption, configOption);
+            Run(s => SymbolTools.ListSymbols(s.Rom, s.Symbols, includeHw, filter, format), target, config);
+        }, symListHwOpt, symListFilterOpt, FormatOption.Option, targetOption, configOption);
         symbolCommand.AddCommand(symbolListCommand);
 
         var symbolSetCommand = new Command("set", "Enable or disable groups of built-in symbols");
@@ -344,11 +350,12 @@ public static class Program
         segmentCommand.AddCommand(segRemoveCommand);
 
         var segListCommand = new Command("list", "List all defined memory segments");
-        segListCommand.SetHandler(() =>
+        segListCommand.AddOption(FormatOption.Option);
+        segListCommand.SetHandler((string format) =>
         {
             var s = CreateCliSession();
-            Console.WriteLine(SegmentTools.ListSegments(s.Segments));
-        });
+            Console.WriteLine(SegmentTools.ListSegments(s.Segments, format));
+        }, FormatOption.Option);
         segmentCommand.AddCommand(segListCommand);
 
         var segClearCommand = new Command("clear", "Clear all defined memory segments");

@@ -22,7 +22,80 @@ public static class CodeCoverage
         double DataPercentage,
         List<CoverageRegion> Regions,
         int OrphanedCodeBytes,
-        int EmbeddedDataBytes);
+        int EmbeddedDataBytes)
+    {
+        /// <summary>
+        /// Format as CSV rows (header + data).
+        /// </summary>
+        public string ToCsv()
+        {
+            var headers = new[] { "start", "end", "total_bytes", "code_bytes", "data_bytes", "code_pct", "data_pct", "orphaned_bytes", "embedded_data_bytes" };
+            var rows = new[]
+            {
+                new[]
+                {
+                    Formatting.HexWord(Start),
+                    Formatting.HexWord(End),
+                    TotalBytes.ToString(),
+                    CodeBytes.ToString(),
+                    DataBytes.ToString(),
+                    $"{CodePercentage:F1}",
+                    $"{DataPercentage:F1}",
+                    OrphanedCodeBytes.ToString(),
+                    EmbeddedDataBytes.ToString()
+                }
+            };
+            return OutputFormatter.FormatCsv(headers, rows);
+        }
+
+        /// <summary>
+        /// Format as TSV rows (header + data).
+        /// </summary>
+        public string ToTsv()
+        {
+            var headers = new[] { "start", "end", "total_bytes", "code_bytes", "data_bytes", "code_pct", "data_pct", "orphaned_bytes", "embedded_data_bytes" };
+            var rows = new[]
+            {
+                new[]
+                {
+                    Formatting.HexWord(Start),
+                    Formatting.HexWord(End),
+                    TotalBytes.ToString(),
+                    CodeBytes.ToString(),
+                    DataBytes.ToString(),
+                    $"{CodePercentage:F1}",
+                    $"{DataPercentage:F1}",
+                    OrphanedCodeBytes.ToString(),
+                    EmbeddedDataBytes.ToString()
+                }
+            };
+            return OutputFormatter.FormatTsv(headers, rows);
+        }
+
+        /// <summary>
+        /// Format as key=value pairs.
+        /// </summary>
+        public string ToKv()
+        {
+            var keys = new[] { "start", "end", "total_bytes", "code_bytes", "data_bytes", "code_pct", "data_pct", "orphaned_bytes", "embedded_data_bytes" };
+            var rows = new[]
+            {
+                new[]
+                {
+                    Formatting.HexWord(Start),
+                    Formatting.HexWord(End),
+                    TotalBytes.ToString(),
+                    CodeBytes.ToString(),
+                    DataBytes.ToString(),
+                    $"{CodePercentage:F1}",
+                    $"{DataPercentage:F1}",
+                    OrphanedCodeBytes.ToString(),
+                    EmbeddedDataBytes.ToString()
+                }
+            };
+            return OutputFormatter.FormatKv(keys, rows);
+        }
+    }
 
     /// <summary>
     /// A contiguous region with uniform code/data classification.

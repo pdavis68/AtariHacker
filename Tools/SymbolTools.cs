@@ -109,7 +109,8 @@ public static partial class SymbolTools
         RomSession session,
         SymbolTable symbols,
         bool includeHardware = false,
-        string? filter = null)
+        string? filter = null,
+        string format = "text")
     {
         try
         {
@@ -129,16 +130,69 @@ public static partial class SymbolTools
                 return "No symbols matched the current filter.";
             }
 
-            return string.Join('\n', query.Select(pair =>
+            return format.ToLowerInvariant() switch
             {
-                var comment = string.IsNullOrWhiteSpace(pair.Value.Comment) ? string.Empty : $"  ; {pair.Value.Comment}";
-                return $"{Formatting.HexWord(pair.Key)}  {pair.Value.Label}{comment}";
-            }));
+                "csv" => FormatSymbolsCsv(query),
+                "tsv" => FormatSymbolsTsv(query),
+                "kv" => FormatSymbolsKv(query),
+                _ => FormatSymbolsText(query)
+            };
         }
         catch (Exception ex)
         {
             return $"ERROR: {ex.Message}";
         }
+    }
+
+    private static string FormatSymbolsText(List<KeyValuePair<ushort, SymbolEntry>> query)
+    {
+        return string.Join('\n', query.Select(pair =>
+        {
+            var comment = string.IsNullOrWhiteSpace(pair.Value.Comment) ? string.Empty : $"  ; {pair.Value.Comment}";
+            return $"{Formatting.HexWord(pair.Key)}  {pair.Value.Label}{comment}";
+        }));
+    }
+
+    private static string FormatSymbolsCsv(List<KeyValuePair<ushort, SymbolEntry>> query)
+    {
+        var headers = new[] { "address", "label", "group", "comment", "is_user_defined" };
+        var rows = query.Select(pair => new[]
+        {
+            Formatting.HexWord(pair.Key),
+            pair.Value.Label,
+            pair.Value.Group.ToString(),
+            pair.Value.Comment ?? string.Empty,
+            pair.Value.IsUserDefined ? "true" : "false"
+        }).ToArray();
+        return OutputFormatter.FormatCsv(headers, rows);
+    }
+
+    private static string FormatSymbolsTsv(List<KeyValuePair<ushort, SymbolEntry>> query)
+    {
+        var headers = new[] { "address", "label", "group", "comment", "is_user_defined" };
+        var rows = query.Select(pair => new[]
+        {
+            Formatting.HexWord(pair.Key),
+            pair.Value.Label,
+            pair.Value.Group.ToString(),
+            pair.Value.Comment ?? string.Empty,
+            pair.Value.IsUserDefined ? "true" : "false"
+        }).ToArray();
+        return OutputFormatter.FormatTsv(headers, rows);
+    }
+
+    private static string FormatSymbolsKv(List<KeyValuePair<ushort, SymbolEntry>> query)
+    {
+        var keys = new[] { "address", "label", "group", "comment", "is_user_defined" };
+        var rows = query.Select(pair => new[]
+        {
+            Formatting.HexWord(pair.Key),
+            pair.Value.Label,
+            pair.Value.Group.ToString(),
+            pair.Value.Comment ?? string.Empty,
+            pair.Value.IsUserDefined ? "true" : "false"
+        }).ToArray();
+        return OutputFormatter.FormatKv(keys, rows);
     }
 
     public static string SetSymbols(
