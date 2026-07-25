@@ -11,7 +11,8 @@ public static class StringSearchTool
         int minLength = 4,
         string encoding = "ascii",
         string? filter = null,
-        int maxResults = 50)
+        int maxResults = 50,
+        VerboseContext? verbose = null)
     {
         try
         {
@@ -26,6 +27,7 @@ public static class StringSearchTool
             var start = -1;
             var buffer = new StringBuilder();
 
+            if (verbose is not null) verbose.BytesProcessed = session.Data.Length;
             for (var i = 0; i < session.Data.Length; i++)
             {
                 if (TryDecode(session.Data[i], useAtascii, out var decoded))

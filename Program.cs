@@ -17,11 +17,15 @@ public static class Program
         var configOption = new Option<string?>(
             ["--config", "-c"],
             "Path to config file (default: .atari-hacker.config in current or parent directory).");
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            "Show execution metadata (execution time, bytes processed, etc.)");
 
         var rootCommand = new RootCommand("AtariHacker — 6502 reverse engineering toolkit for Atari 8-bit binaries, ROMs, and disk images")
         {
             targetOption,
-            configOption
+            configOption,
+            verboseOption
         };
 
         // ─── Helper to create session state ─────────────────────────────
@@ -69,8 +73,8 @@ public static class Program
             return string.Empty;
         }
 
-        // Helper to run a session-based command
-        static void Run(Func<CliSession, string> action, string? target, string? config)
+        // Helper to run a session-based command with optional verbose context
+        static void Run(Func<CliSession, VerboseContext, string> action, string? target, string? config, bool verbose = false)
         {
             var s = CreateCliSession();
             var err = EnsureLoaded(s, target, config);
@@ -79,7 +83,23 @@ public static class Program
                 Console.Error.WriteLine(err);
                 return;
             }
-            Console.WriteLine(action(s));
+
+            var verboseCtx = new VerboseContext { Enabled = verbose };
+            if (verbose)
+            {
+                verboseCtx.Timer.Start();
+            }
+
+            var result = action(s, verboseCtx);
+
+            if (verbose)
+            {
+                verboseCtx.Timer.Stop();
+                var meta = verboseCtx.GetMetadata(s.Rom, s.Symbols, s.Segments);
+                Console.Write(meta);
+            }
+
+            Console.WriteLine(result);
         }
 
         // ═══════════════════════════════════════════════════════════════════
@@ -98,10 +118,10 @@ public static class Program
         }, loadPathArg, targetOption, configOption);
 
         var infoCommand = new Command("info", "Display information about the currently loaded binary");
-        infoCommand.SetHandler((string? target, string? config) =>
+        infoCommand.SetHandler((string? target, string? config, bool verbose) =>
         {
-            Run(s => FileTools.RomInfo(s.Rom, s.Symbols, s.ZeroPage), target, config);
-        }, targetOption, configOption);
+            Run((s, v) => FileTools.RomInfo(s.Rom, s.Symbols, s.ZeroPage), target, config, verbose);
+        }, targetOption, configOption, verboseOption);
 
         var scriptCommand = new Command("script", "Execute a sequence of commands from a script file");
         var scriptPathArg = new Argument<string>("path", "Path to the script file");
@@ -127,10 +147,10 @@ public static class Program
         disassembleCommand.AddOption(startAddrOpt);
         disassembleCommand.AddOption(formatOpt);
         disassembleCommand.AddOption(analyzeOpt);
-        disassembleCommand.SetHandler((string offset, int bytes, string? startAddr, string format, bool analyze, string? target, string? config) =>
+        disassembleCommand.SetHandler((string offset, int bytes, string? startAddr, string format, bool analyze, string? target, string? config, bool verbose) =>
         {
-            Run(s => DisassemblerTool.Disassemble(s.Rom, s.Symbols, s.ZeroPage, offset, bytes, startAddr, format, analyze), target, config);
-        }, offsetArg, numBytesArg, startAddrOpt, formatOpt, analyzeOpt, targetOption, configOption);
+            Run((s, v) => DisassemblerTool.Disassemble(s.Rom, s.Symbols, s.ZeroPage, offset, bytes, startAddr, format, analyze, v), target, config, verbose);
+        }, offsetArg, numBytesArg, startAddrOpt, formatOpt, analyzeOpt, targetOption, configOption, verboseOption);
 
         // ═══════════════════════════════════════════════════════════════════
         // HEX DUMP
@@ -143,10 +163,10 @@ public static class Program
         hexDumpCommand.AddArgument(hdOffsetArg);
         hexDumpCommand.AddArgument(hdBytesArg);
         hexDumpCommand.AddOption(hdAddrOpt);
-        hexDumpCommand.SetHandler((string offset, int bytes, string? addr, string? target, string? config) =>
+        hexDumpCommand.SetHandler((string offset, int bytes, string? addr, string? target, string? config, bool verbose) =>
         {
-            Run(s => HexDumpTool.HexDump(s.Rom, offset, bytes, addr), target, config);
-        }, hdOffsetArg, hdBytesArg, hdAddrOpt, targetOption, configOption);
+            Run((s, v) => HexDumpTool.HexDump(s.Rom, offset, bytes, addr), target, config, verbose);
+        }, hdOffsetArg, hdBytesArg, hdAddrOpt, targetOption, configOption, verboseOption);
 
         // ═══════════════════════════════════════════════════════════════════
         // SEARCH
@@ -157,10 +177,10 @@ public static class Program
         var maxResultsOpt = new Option<int>("--max-results", () => 50, "Maximum number of matches to return");
         findPatternCommand.AddArgument(patternArg);
         findPatternCommand.AddOption(maxResultsOpt);
-        findPatternCommand.SetHandler((string pattern, int maxResults, string? target, string? config) =>
+        findPatternCommand.SetHandler((string pattern, int maxResults, string? target, string? config, bool verbose) =>
         {
-            Run(s => FindPatternTool.FindPattern(s.Rom, pattern, maxResults), target, config);
-        }, patternArg, maxResultsOpt, targetOption, configOption);
+            Run((s, v) => FindPatternTool.FindPattern(s.Rom, pattern, maxResults, v), target, config, verbose);
+        }, patternArg, maxResultsOpt, targetOption, configOption, verboseOption);
 
         var findStringsCommand = new Command("find-strings", "Search for runs of printable ASCII or ATASCII characters");
         var minLenOpt = new Option<int>("--min-length", () => 4, "Minimum string length");
@@ -171,10 +191,10 @@ public static class Program
         findStringsCommand.AddOption(encodingOpt);
         findStringsCommand.AddOption(filterOpt);
         findStringsCommand.AddOption(fsMaxOpt);
-        findStringsCommand.SetHandler((int minLen, string encoding, string? filter, int maxRes, string? target, string? config) =>
+        findStringsCommand.SetHandler((int minLen, string encoding, string? filter, int maxRes, string? target, string? config, bool verbose) =>
         {
-            Run(s => StringSearchTool.FindStrings(s.Rom, minLen, encoding, filter, maxRes), target, config);
-        }, minLenOpt, encodingOpt, filterOpt, fsMaxOpt, targetOption, configOption);
+            Run((s, v) => StringSearchTool.FindStrings(s.Rom, minLen, encoding, filter, maxRes, v), target, config, verbose);
+        }, minLenOpt, encodingOpt, filterOpt, fsMaxOpt, targetOption, configOption, verboseOption);
 
         // ═══════════════════════════════════════════════════════════════════
         // ANALYSIS
@@ -187,10 +207,10 @@ public static class Program
         analyzeCommand.AddOption(anStartOpt);
         analyzeCommand.AddOption(anBytesOpt);
         analyzeCommand.AddOption(anFormatOpt);
-        analyzeCommand.SetHandler((string? startAddr, int? bytes, string format, string? target, string? config) =>
+        analyzeCommand.SetHandler((string? startAddr, int? bytes, string format, string? target, string? config, bool verbose) =>
         {
-            Run(s => AnalysisTools.AnalyzeDisassembly(s.Rom, s.Symbols, s.ZeroPage, startAddr, bytes, format), target, config);
-        }, anStartOpt, anBytesOpt, anFormatOpt, targetOption, configOption);
+            Run((s, v) => AnalysisTools.AnalyzeDisassembly(s.Rom, s.Symbols, s.ZeroPage, startAddr, bytes, format, v), target, config, verbose);
+        }, anStartOpt, anBytesOpt, anFormatOpt, targetOption, configOption, verboseOption);
 
         var probeCommand = new Command("probe", "Analyze a memory range to identify data type");
         var probeStartArg = new Argument<string>("start", "Start address (hex)");
@@ -198,10 +218,10 @@ public static class Program
         probeCommand.AddArgument(probeStartArg);
         probeCommand.AddArgument(probeEndArg);
         probeCommand.AddOption(FormatOption.Option);
-        probeCommand.SetHandler((string start, string end, string format, string? target, string? config) =>
+        probeCommand.SetHandler((string start, string end, string format, string? target, string? config, bool verbose) =>
         {
-            Run(s => AnalysisTools.ProbeData(s.Rom, start, end, format), target, config);
-        }, probeStartArg, probeEndArg, FormatOption.Option, targetOption, configOption);
+            Run((s, v) => AnalysisTools.ProbeData(s.Rom, start, end, format, v), target, config, verbose);
+        }, probeStartArg, probeEndArg, FormatOption.Option, targetOption, configOption, verboseOption);
 
         var callgraphCommand = new Command("callgraph", "Generate a call graph showing subroutine relationships");
         var cgStartOpt = new Option<string?>("--start-address", "Starting address for call graph root (hex)");
@@ -210,10 +230,10 @@ public static class Program
         callgraphCommand.AddOption(cgStartOpt);
         callgraphCommand.AddOption(cgDepthOpt);
         callgraphCommand.AddOption(cgFormatOpt);
-        callgraphCommand.SetHandler((string? startAddr, int depth, string format, string? target, string? config) =>
+        callgraphCommand.SetHandler((string? startAddr, int depth, string format, string? target, string? config, bool verbose) =>
         {
-            Run(s => AnalysisTools.GenerateCallGraph(s.Rom, s.Symbols, s.ZeroPage, startAddr, depth, format), target, config);
-        }, cgStartOpt, cgDepthOpt, cgFormatOpt, targetOption, configOption);
+            Run((s, v) => AnalysisTools.GenerateCallGraph(s.Rom, s.Symbols, s.ZeroPage, startAddr, depth, format), target, config, verbose);
+        }, cgStartOpt, cgDepthOpt, cgFormatOpt, targetOption, configOption, verboseOption);
 
         var coverageCommand = new Command("coverage", "Analyze code coverage — which bytes are executed vs data");
         var covStartArg = new Argument<string>("start", "Start address (hex)");
@@ -221,10 +241,10 @@ public static class Program
         coverageCommand.AddArgument(covStartArg);
         coverageCommand.AddArgument(covEndArg);
         coverageCommand.AddOption(FormatOption.Option);
-        coverageCommand.SetHandler((string start, string end, string format, string? target, string? config) =>
+        coverageCommand.SetHandler((string start, string end, string format, string? target, string? config, bool verbose) =>
         {
-            Run(s => AnalysisTools.AnalyzeCoverage(s.Rom, start, end, format), target, config);
-        }, covStartArg, covEndArg, FormatOption.Option, targetOption, configOption);
+            Run((s, v) => AnalysisTools.AnalyzeCoverage(s.Rom, start, end, format, v), target, config, verbose);
+        }, covStartArg, covEndArg, FormatOption.Option, targetOption, configOption, verboseOption);
 
         // ═══════════════════════════════════════════════════════════════════
         // CONTROL FLOW & XREF
@@ -238,19 +258,19 @@ public static class Program
         traceCommand.AddOption(traceDepthOpt);
         traceCommand.AddOption(traceBudgetOpt);
         traceCommand.AddOption(FormatOption.Option);
-        traceCommand.SetHandler((string addr, int depth, int budget, string format, string? target, string? config) =>
+        traceCommand.SetHandler((string addr, int depth, int budget, string format, string? target, string? config, bool verbose) =>
         {
-            Run(s => ControlFlowTool.TraceControlFlow(s.Rom, s.Symbols, s.ZeroPage, addr, depth, budget, format), target, config);
-        }, traceAddrArg, traceDepthOpt, traceBudgetOpt, FormatOption.Option, targetOption, configOption);
+            Run((s, v) => ControlFlowTool.TraceControlFlow(s.Rom, s.Symbols, s.ZeroPage, addr, depth, budget, format), target, config, verbose);
+        }, traceAddrArg, traceDepthOpt, traceBudgetOpt, FormatOption.Option, targetOption, configOption, verboseOption);
 
         var xrefCommand = new Command("xref", "Find locations that reference a target address");
         var xrefAddrArg = new Argument<string>("address", "Target address to cross-reference");
         xrefCommand.AddArgument(xrefAddrArg);
         xrefCommand.AddOption(FormatOption.Option);
-        xrefCommand.SetHandler((string addr, string format, string? target, string? config) =>
+        xrefCommand.SetHandler((string addr, string format, string? target, string? config, bool verbose) =>
         {
-            Run(s => XRefTool.XRef(s.Rom, s.Symbols, s.ZeroPage, addr, format), target, config);
-        }, xrefAddrArg, FormatOption.Option, targetOption, configOption);
+            Run((s, v) => XRefTool.XRef(s.Rom, s.Symbols, s.ZeroPage, addr, format), target, config, verbose);
+        }, xrefAddrArg, FormatOption.Option, targetOption, configOption, verboseOption);
 
         // ═══════════════════════════════════════════════════════════════════
         // SYMBOL COMMANDS
@@ -264,28 +284,28 @@ public static class Program
         symbolDefineCommand.AddArgument(symAddrArg);
         symbolDefineCommand.AddArgument(symLabelArg);
         symbolDefineCommand.AddOption(symCommentOpt);
-        symbolDefineCommand.SetHandler((string addr, string label, string? comment, string? target, string? config) =>
+        symbolDefineCommand.SetHandler((string addr, string label, string? comment, string? target, string? config, bool verbose) =>
         {
-            Run(s => SymbolTools.DefineSymbol(s.Rom, s.Symbols, s.Persistence, addr, label, comment), target, config);
-        }, symAddrArg, symLabelArg, symCommentOpt, targetOption, configOption);
+            Run((s, v) => SymbolTools.DefineSymbol(s.Rom, s.Symbols, s.Persistence, addr, label, comment), target, config, verbose);
+        }, symAddrArg, symLabelArg, symCommentOpt, targetOption, configOption, verboseOption);
         symbolCommand.AddCommand(symbolDefineCommand);
 
         var symbolRemoveCommand = new Command("remove", "Remove a user-defined symbol");
         var symRemoveAddrArg = new Argument<string>("address", "Address of the symbol to remove");
         symbolRemoveCommand.AddArgument(symRemoveAddrArg);
-        symbolRemoveCommand.SetHandler((string addr, string? target, string? config) =>
+        symbolRemoveCommand.SetHandler((string addr, string? target, string? config, bool verbose) =>
         {
-            Run(s => SymbolTools.RemoveSymbol(s.Rom, s.Symbols, s.Persistence, addr), target, config);
-        }, symRemoveAddrArg, targetOption, configOption);
+            Run((s, v) => SymbolTools.RemoveSymbol(s.Rom, s.Symbols, s.Persistence, addr), target, config, verbose);
+        }, symRemoveAddrArg, targetOption, configOption, verboseOption);
         symbolCommand.AddCommand(symbolRemoveCommand);
 
         var symbolLookupCommand = new Command("lookup", "Look up the symbol entry for an address");
         var symLookupAddrArg = new Argument<string>("address", "Memory address");
         symbolLookupCommand.AddArgument(symLookupAddrArg);
-        symbolLookupCommand.SetHandler((string addr, string? target, string? config) =>
+        symbolLookupCommand.SetHandler((string addr, string? target, string? config, bool verbose) =>
         {
-            Run(s => SymbolTools.LookupSymbol(s.Rom, s.Symbols, addr), target, config);
-        }, symLookupAddrArg, targetOption, configOption);
+            Run((s, v) => SymbolTools.LookupSymbol(s.Rom, s.Symbols, addr), target, config, verbose);
+        }, symLookupAddrArg, targetOption, configOption, verboseOption);
         symbolCommand.AddCommand(symbolLookupCommand);
 
         var symbolListCommand = new Command("list", "List symbols in the symbol table");
@@ -294,10 +314,10 @@ public static class Program
         symbolListCommand.AddOption(symListHwOpt);
         symbolListCommand.AddOption(symListFilterOpt);
         symbolListCommand.AddOption(FormatOption.Option);
-        symbolListCommand.SetHandler((bool includeHw, string? filter, string format, string? target, string? config) =>
+        symbolListCommand.SetHandler((bool includeHw, string? filter, string format, string? target, string? config, bool verbose) =>
         {
-            Run(s => SymbolTools.ListSymbols(s.Rom, s.Symbols, includeHw, filter, format), target, config);
-        }, symListHwOpt, symListFilterOpt, FormatOption.Option, targetOption, configOption);
+            Run((s, v) => SymbolTools.ListSymbols(s.Rom, s.Symbols, includeHw, filter, format), target, config, verbose);
+        }, symListHwOpt, symListFilterOpt, FormatOption.Option, targetOption, configOption, verboseOption);
         symbolCommand.AddCommand(symbolListCommand);
 
         var symbolSetCommand = new Command("set", "Enable or disable groups of built-in symbols");
@@ -388,19 +408,19 @@ public static class Program
         zpAnnotateCommand.AddArgument(zpAddrArg);
         zpAnnotateCommand.AddArgument(zpLabelArg);
         zpAnnotateCommand.AddOption(zpCommentOpt);
-        zpAnnotateCommand.SetHandler((string addr, string label, string? comment, string? target, string? config) =>
+        zpAnnotateCommand.SetHandler((string addr, string label, string? comment, string? target, string? config, bool verbose) =>
         {
-            Run(s => ZeroPageTool.AnnotateZeroPage(s.Rom, s.ZeroPage, s.Persistence, addr, label, comment), target, config);
-        }, zpAddrArg, zpLabelArg, zpCommentOpt, targetOption, configOption);
+            Run((s, v) => ZeroPageTool.AnnotateZeroPage(s.Rom, s.ZeroPage, s.Persistence, addr, label, comment), target, config, verbose);
+        }, zpAddrArg, zpLabelArg, zpCommentOpt, targetOption, configOption, verboseOption);
         zpCommand.AddCommand(zpAnnotateCommand);
 
         var zpShowCommand = new Command("show", "Display zero page annotations");
         var zpShowAllOpt = new Option<bool>("--all", "Show all 256 bytes of zero page");
         zpShowCommand.AddOption(zpShowAllOpt);
-        zpShowCommand.SetHandler((bool all, string? target, string? config) =>
+        zpShowCommand.SetHandler((bool all, string? target, string? config, bool verbose) =>
         {
-            Run(s => ZeroPageTool.ShowZeroPageMap(s.Rom, s.ZeroPage, all), target, config);
-        }, zpShowAllOpt, targetOption, configOption);
+            Run((s, v) => ZeroPageTool.ShowZeroPageMap(s.Rom, s.ZeroPage, all), target, config, verbose);
+        }, zpShowAllOpt, targetOption, configOption, verboseOption);
         zpCommand.AddCommand(zpShowCommand);
 
         // ═══════════════════════════════════════════════════════════════════
@@ -421,10 +441,10 @@ public static class Program
         var labelsSaveCommand = new Command("save", "Save current labels and segments to a sidecar file");
         var saveLabelsPathOpt = new Option<string?>("--output", "Optional output path (defaults to ROM path + .atarihacker.json)");
         labelsSaveCommand.AddOption(saveLabelsPathOpt);
-        labelsSaveCommand.SetHandler((string? output, string? target, string? config) =>
+        labelsSaveCommand.SetHandler((string? output, string? target, string? config, bool verbose) =>
         {
-            Run(s => SymbolTools.SaveLabels(s.Persistence, output), target, config);
-        }, saveLabelsPathOpt, targetOption, configOption);
+            Run((s, v) => SymbolTools.SaveLabels(s.Persistence, output), target, config, verbose);
+        }, saveLabelsPathOpt, targetOption, configOption, verboseOption);
         labelsCommand.AddCommand(labelsSaveCommand);
 
         // ═══════════════════════════════════════════════════════════════════

@@ -14,7 +14,8 @@ public static class AnalysisTools
         ZeroPageMap zeroPageMap,
         string? startAddress = null,
         int? numBytes = null,
-        string format = "summary")
+        string format = "summary",
+        VerboseContext? verbose = null)
     {
         try
         {
@@ -49,6 +50,11 @@ public static class AnalysisTools
             var references = DisassemblyAnalyzer.Analyze(data, segments, baseAddress);
             var (codeRegions, dataRegions) = DisassemblyAnalyzer.TraceCodeRegions(data, references, segments, baseAddress);
             var labelMap = DisassemblyAnalyzer.GenerateLabels(references, symbols, zeroPageMap, codeRegions);
+            if (verbose is not null)
+            {
+                verbose.BytesProcessed = data.Length;
+                verbose.PassesCompleted = 3;
+            }
 
             // Determine the range for analysis output
             ushort analysisStart;
@@ -94,7 +100,8 @@ public static class AnalysisTools
         RomSession session,
         string start,
         string end,
-        string format = "text")
+        string format = "text",
+        VerboseContext? verbose = null)
     {
         try
         {
@@ -125,6 +132,11 @@ public static class AnalysisTools
             var probeEnd = endAddr;
 
             var result = DataProber.ProbeData(session.Data, probeStart, probeEnd);
+            if (verbose is not null)
+            {
+                verbose.BytesProcessed = endOffset.Value - startOffset.Value + 1;
+                verbose.Confidence = result.Confidence;
+            }
 
             return format.ToLowerInvariant() switch
             {
@@ -198,7 +210,8 @@ public static class AnalysisTools
         RomSession session,
         string start,
         string end,
-        string format = "text")
+        string format = "text",
+        VerboseContext? verbose = null)
     {
         try
         {
@@ -214,6 +227,10 @@ public static class AnalysisTools
             var (codeRegions, dataRegions) = DisassemblyAnalyzer.TraceCodeRegions(session.Data, references, session.Segments, session.BaseAddress);
 
             var result = CodeCoverage.AnalyzeCoverage(session.Data, references, codeRegions, dataRegions, startAddr, endAddr);
+            if (verbose is not null)
+            {
+                verbose.BytesProcessed = endAddr - startAddr + 1;
+            }
 
             return format.ToLowerInvariant() switch
             {

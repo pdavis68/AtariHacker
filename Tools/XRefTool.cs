@@ -50,7 +50,13 @@ public static class XRefTool
                 }
             }
 
-            if (rows.Count == 0)
+            // Sort deterministically: by address (asc), then mnemonic (alpha)
+            var sortedRows = rows
+                .OrderBy(r => r.Address)
+                .ThenBy(r => r.Mnemonic, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (sortedRows.Count == 0)
             {
                 return format.ToLowerInvariant() switch
                 {
@@ -67,10 +73,10 @@ public static class XRefTool
 
             return format.ToLowerInvariant() switch
             {
-                "csv" => FormatXRefCsv(rows),
-                "tsv" => FormatXRefTsv(rows),
-                "kv" => FormatXRefKv(rows),
-                _ => FormatXRefText(rows, target, symbols, zeroPageMap)
+                "csv" => FormatXRefCsv(sortedRows),
+                "tsv" => FormatXRefTsv(sortedRows),
+                "kv" => FormatXRefKv(sortedRows),
+                _ => FormatXRefText(sortedRows, target, symbols, zeroPageMap)
             };
         }
         catch (Exception ex)

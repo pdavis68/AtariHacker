@@ -75,7 +75,7 @@ public static class SegmentTools
     {
         try
         {
-            var segments = segmentManager.Segments;
+            var segments = segmentManager.GetOrderedSegments().ToList();
             if (segments.Count == 0)
             {
                 return "No segments defined.";
@@ -95,7 +95,7 @@ public static class SegmentTools
         }
     }
 
-    private static string FormatSegmentsText(IReadOnlyList<SegmentDefinition> segments, SegmentManager segmentManager)
+    private static string FormatSegmentsText(List<SegmentDefinition> segments, SegmentManager segmentManager)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"Segments ({segments.Count} defined):");
@@ -122,7 +122,7 @@ public static class SegmentTools
         return sb.ToString();
     }
 
-    private static string FormatSegmentsCsv(IReadOnlyList<SegmentDefinition> segments)
+    private static string FormatSegmentsCsv(List<SegmentDefinition> segments)
     {
         var headers = new[] { "name", "type", "start", "end", "size", "comment" };
         var rows = segments.Select(seg => new[]
@@ -137,7 +137,7 @@ public static class SegmentTools
         return OutputFormatter.FormatCsv(headers, rows);
     }
 
-    private static string FormatSegmentsTsv(IReadOnlyList<SegmentDefinition> segments)
+    private static string FormatSegmentsTsv(List<SegmentDefinition> segments)
     {
         var headers = new[] { "name", "type", "start", "end", "size", "comment" };
         var rows = segments.Select(seg => new[]
@@ -152,7 +152,7 @@ public static class SegmentTools
         return OutputFormatter.FormatTsv(headers, rows);
     }
 
-    private static string FormatSegmentsKv(IReadOnlyList<SegmentDefinition> segments)
+    private static string FormatSegmentsKv(List<SegmentDefinition> segments)
     {
         var keys = new[] { "name", "type", "start", "end", "size", "comment" };
         var rows = segments.Select(seg => new[]

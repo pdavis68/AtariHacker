@@ -29,7 +29,8 @@ public static class DisassemblerTool
         int numBytes,
         string? startAddress = null,
         string format = "listing",
-        bool analyze = false)
+        bool analyze = false,
+        VerboseContext? verbose = null)
     {
         try
         {
@@ -46,6 +47,7 @@ public static class DisassemblerTool
 
             var addressOverride = string.IsNullOrWhiteSpace(startAddress) ? (ushort?)null : AddressParser.ParseAddress(startAddress);
             var end = Math.Min(session.Length, fileOffset + Math.Max(numBytes, 0));
+            if (verbose is not null) verbose.BytesProcessed = end - fileOffset;
 
             // Parse all instructions into a structured list
             var instructions = DisassembleRange(session, fileOffset, end, addressOverride, symbols, zeroPageMap);

@@ -153,4 +153,14 @@ public sealed class SegmentManager
 
         return gaps;
     }
+
+    /// <summary>
+    /// Returns segments sorted by start address (ascending), then by name (alphabetical).
+    /// Provides deterministic ordering for list commands.
+    /// </summary>
+    public IEnumerable<SegmentDefinition> GetOrderedSegments()
+    {
+        return _segments.OrderBy(s => s.Start)
+                        .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase);
+    }
 }

@@ -8,7 +8,8 @@ public static class FindPatternTool
     public static string FindPattern(
         RomSession session,
         string pattern,
-        int maxResults = 50)
+        int maxResults = 50,
+        VerboseContext? verbose = null)
     {
         try
         {
@@ -24,6 +25,7 @@ public static class FindPatternTool
             }
 
             var parsed = tokens.Select(ParseToken).ToArray();
+            if (verbose is not null) verbose.BytesProcessed = session.Length;
             var matches = new List<string>();
             for (var offset = 0; offset <= session.Length - parsed.Length && matches.Count < Math.Max(maxResults, 1); offset++)
             {

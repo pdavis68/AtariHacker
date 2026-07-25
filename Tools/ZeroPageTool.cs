@@ -43,6 +43,7 @@ public static class ZeroPageTool
 
             var lines = zeroPageMap
                 .OrderBy(pair => pair.Key)
+                .ThenBy(pair => pair.Value.Label, StringComparer.OrdinalIgnoreCase)
                 .Select(pair => $"{Formatting.HexByte(pair.Key)}  {pair.Value.Label}{(string.IsNullOrWhiteSpace(pair.Value.Comment) ? string.Empty : $"  ; {pair.Value.Comment}")}")
                 .ToList();
 

@@ -46,4 +46,14 @@ public sealed class SymbolTable : Dictionary<ushort, SymbolEntry>
         // Hardware symbols are enabled if their group is enabled
         return EnabledGroups.HasFlag(entry.Group);
     }
+
+    /// <summary>
+    /// Returns symbols sorted by address (ascending), then by label (alphabetical).
+    /// Provides deterministic ordering for list commands.
+    /// </summary>
+    public IEnumerable<KeyValuePair<ushort, SymbolEntry>> GetOrderedSymbols()
+    {
+        return this.OrderBy(kvp => kvp.Key)
+                   .ThenBy(kvp => kvp.Value.Label, StringComparer.OrdinalIgnoreCase);
+    }
 }

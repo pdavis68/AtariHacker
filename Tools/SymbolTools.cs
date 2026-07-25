@@ -123,6 +123,7 @@ public static partial class SymbolTools
                 .Where(pair => includeHardware || pair.Value.IsUserDefined)
                 .Where(pair => string.IsNullOrWhiteSpace(filter) || pair.Value.Label.Contains(filter, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(pair => pair.Key)
+                .ThenBy(pair => pair.Value.Label, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
             if (query.Count == 0)
