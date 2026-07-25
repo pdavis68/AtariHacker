@@ -437,6 +437,105 @@ public static class Program
         segmentCommand.AddCommand(segLinkerCommand);
 
         // ═══════════════════════════════════════════════════════════════════
+        // PATTERN LIBRARY COMMANDS
+        // ═══════════════════════════════════════════════════════════════════
+
+        var patternsCommand = new Command("patterns", "Manage a persistent pattern library");
+
+        // patterns list
+        var patternsListCommand = new Command("list", "List all saved patterns with optional filters");
+        var plTagOpt = new Option<string?>("--tag", "Filter by tag");
+        var plCategoryOpt = new Option<string?>("--category", "Filter by category");
+        var plQueryOpt = new Option<string?>("--query", "Search by name or description text");
+        patternsListCommand.AddOption(plTagOpt);
+        patternsListCommand.AddOption(plCategoryOpt);
+        patternsListCommand.AddOption(plQueryOpt);
+        patternsListCommand.AddOption(FormatOption.Option);
+        patternsListCommand.SetHandler((string? tag, string? category, string? query, string format) =>
+        {
+            Console.WriteLine(PatternTools.ListPatterns(tag, category, query, format));
+        }, plTagOpt, plCategoryOpt, plQueryOpt, FormatOption.Option);
+        patternsCommand.AddCommand(patternsListCommand);
+
+        // patterns add
+        var patternsAddCommand = new Command("add", "Save a new pattern from inline hex");
+        var paNameArg = new Argument<string>("name", "Unique name for the pattern");
+        var paHexArg = new Argument<string>("hex", "Space-separated hex bytes with ?? for wildcards");
+        var paDescOpt = new Option<string?>("--description", "Human-readable description");
+        var paTagOpt = new Option<string[]?>("--tag", () => null, "Tag to apply (can be specified multiple times)");
+        var paCategoryOpt = new Option<string?>("--category", "Category (e.g., code-patterns, hardware)");
+        var paForceOpt = new Option<bool>("--force", "Overwrite existing pattern with the same name");
+        patternsAddCommand.AddArgument(paNameArg);
+        patternsAddCommand.AddArgument(paHexArg);
+        patternsAddCommand.AddOption(paDescOpt);
+        patternsAddCommand.AddOption(paTagOpt);
+        patternsAddCommand.AddOption(paCategoryOpt);
+        patternsAddCommand.AddOption(paForceOpt);
+        patternsAddCommand.SetHandler((string name, string hex, string? desc, string[]? tags, string? category, bool force) =>
+        {
+            Console.WriteLine(PatternTools.AddPattern(name, hex, desc, tags, category, force));
+        }, paNameArg, paHexArg, paDescOpt, paTagOpt, paCategoryOpt, paForceOpt);
+        patternsCommand.AddCommand(patternsAddCommand);
+
+        // patterns remove
+        var patternsRemoveCommand = new Command("remove", "Delete a pattern by name");
+        var prNameArg = new Argument<string>("name", "Name of the pattern to remove");
+        patternsRemoveCommand.AddArgument(prNameArg);
+        patternsRemoveCommand.SetHandler((string name) =>
+        {
+            Console.WriteLine(PatternTools.RemovePattern(name));
+        }, prNameArg);
+        patternsCommand.AddCommand(patternsRemoveCommand);
+
+        // patterns show
+        var patternsShowCommand = new Command("show", "Display full details of a named pattern");
+        var psNameArg = new Argument<string>("name", "Name of the pattern to display");
+        patternsShowCommand.AddArgument(psNameArg);
+        patternsShowCommand.SetHandler((string name) =>
+        {
+            Console.WriteLine(PatternTools.ShowPattern(name));
+        }, psNameArg);
+        patternsCommand.AddCommand(patternsShowCommand);
+
+        // patterns search
+        var patternsSearchCommand = new Command("search", "Search the loaded binary using a saved pattern");
+        var pscNameArg = new Argument<string>("name", "Name of the pattern to search with");
+        var pscMaxResultsOpt = new Option<int>("--max-results", () => 50, "Maximum number of matches to return");
+        patternsSearchCommand.AddArgument(pscNameArg);
+        patternsSearchCommand.AddOption(pscMaxResultsOpt);
+        patternsSearchCommand.SetHandler((string name, int maxResults, string? target, string? config, bool verbose) =>
+        {
+            Run((s, v) => PatternTools.SearchPattern(s.Rom, name, maxResults, v), target, config, verbose);
+        }, pscNameArg, pscMaxResultsOpt, targetOption, configOption, verboseOption);
+        patternsCommand.AddCommand(patternsSearchCommand);
+
+        // patterns import
+        var patternsImportCommand = new Command("import", "Import patterns from a JSON file");
+        var piPathArg = new Argument<string>("path", "Path to the JSON pattern file");
+        var piForceOpt = new Option<bool>("--force", "Overwrite existing patterns with the same name");
+        patternsImportCommand.AddArgument(piPathArg);
+        patternsImportCommand.AddOption(piForceOpt);
+        patternsImportCommand.SetHandler((string path, bool force) =>
+        {
+            Console.WriteLine(PatternTools.ImportPatterns(path, force));
+        }, piPathArg, piForceOpt);
+        patternsCommand.AddCommand(patternsImportCommand);
+
+        // patterns export
+        var patternsExportCommand = new Command("export", "Export patterns to a JSON file");
+        var peOutputArg = new Argument<string>("output", "Output path for the JSON file");
+        var peTagOpt = new Option<string?>("--tag", "Export only patterns with this tag");
+        var peCategoryOpt = new Option<string?>("--category", "Export only patterns in this category");
+        patternsExportCommand.AddArgument(peOutputArg);
+        patternsExportCommand.AddOption(peTagOpt);
+        patternsExportCommand.AddOption(peCategoryOpt);
+        patternsExportCommand.SetHandler((string output, string? tag, string? category) =>
+        {
+            Console.WriteLine(PatternTools.ExportPatterns(tag, category, output));
+        }, peOutputArg, peTagOpt, peCategoryOpt);
+        patternsCommand.AddCommand(patternsExportCommand);
+
+        // ═══════════════════════════════════════════════════════════════════
         // ZERO PAGE COMMANDS
         // ═══════════════════════════════════════════════════════════════════
 
@@ -682,6 +781,7 @@ public static class Program
         rootCommand.AddCommand(xrefCommand);
         rootCommand.AddCommand(symbolCommand);
         rootCommand.AddCommand(segmentCommand);
+        rootCommand.AddCommand(patternsCommand);
         rootCommand.AddCommand(zpCommand);
         rootCommand.AddCommand(labelsCommand);
         rootCommand.AddCommand(atrCommand);
