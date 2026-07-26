@@ -2,6 +2,23 @@
 
 A command-line toolkit for reverse-engineering Atari 8-bit binaries, ROMs, and ATR disk images. Supports multi-pass disassembly analysis, code/data separation, segment-aware output, ATR file injection, batch scripting, and a comprehensive Atari hardware symbol table.
 
+## Features
+
+- **6502 Disassembly** — Multi-pass analysis engine with code/data separation, label generation, and segment-aware output in `listing`, `ca65`, `atasm`, and `mac65` formats
+- **ATR Disk Image Tools** — Inspect, create, extract, inject, and modify ATR disk images including sector-level operations, DOS directory listing, and boot sector analysis
+- **SpartaDOS Filesystem Support** — Read and write files on SpartaDOS-formatted ATR images with directory listing and file extraction
+- **Multi-Format Support** — Load and analyze ROM files, XEX executables, and ATR disk images
+- **Static Analysis** — Data flow analysis, control flow tracing, cross-reference graph, call graph generation (Mermaid/Text), and code coverage analysis
+- **Data Probing** — Heuristic detection of strings, padding, character sets, lookup tables, ANTIC display lists, sprite data, and map data
+- **Pattern Detection** — Search for byte patterns (with wildcards), find printable ASCII/ATASCII strings, and structural pattern matching
+- **Symbol Management** — Built-in symbol table covering 200+ Atari hardware registers (GTIA, POKEY, PIA, ANTIC), OS ROM entry points, and zero-page OS variables with group toggling
+- **Segment Management** — Define memory regions by type (code, data, graphics, text, zero_page) with cc65 linker configuration export
+- **Zero Page Annotation** — Annotate and display zero-page memory locations for OS variables and custom use
+- **Batch Scripting** — Execute sequences of commands from script files for automated workflows
+- **Persistence** — Sidecar JSON files for saving/loading symbols, annotations, and segment definitions with SHA-256 integrity
+- **Diff & Comparison** — Compare ROM and ATR files with summary, verbose, and hex output formats
+- **Address Parsing** — Flexible address input supporting decimal, `$` hex, and `0x` hex notation
+
 ## Requirements
 
 - .NET SDK 10.0+
