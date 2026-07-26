@@ -484,11 +484,17 @@ public static class DisassemblerTool
     /// Generates a label name for an address. Uses the symbol table if available,
     /// otherwise generates an auto-label like "L3F00".
     /// </summary>
-    private static string GetLabelName(ushort address, SymbolTable symbols, ZeroPageMap zeroPageMap)
+    private static string GetLabelName(ushort address, SymbolTable symbols, ZeroPageMap zeroPageMap, bool isCodeLabel = false)
     {
         var entry = SymbolResolver.ResolveEntry(address, symbols, zeroPageMap);
         if (entry is not null && !entry.IsHardware)
         {
+            // Don't use zero-page OS variable labels as code labels
+            // Zero-page labels should only appear as operand comments
+            if (isCodeLabel && address <= 0xFF && zeroPageMap.ContainsKey((byte)address))
+            {
+                return $"L{address:X4}";
+            }
             return entry.Label;
         }
         return $"L{address:X4}";
@@ -575,7 +581,7 @@ public static class DisassemblerTool
             // Emit label if this address is a target
             if (instr.Address is not null && labelAddresses.Contains(instr.Address.Value))
             {
-                var label = GetLabelName(instr.Address.Value, symbols, zeroPageMap);
+                var label = GetLabelName(instr.Address.Value, symbols, zeroPageMap, isCodeLabel: true);
                 lines.Add($"{label}:");
             }
 
@@ -624,7 +630,7 @@ public static class DisassemblerTool
         {
             if (instr.Address is not null && labelAddresses.Contains(instr.Address.Value))
             {
-                var label = GetLabelName(instr.Address.Value, symbols, zeroPageMap);
+                var label = GetLabelName(instr.Address.Value, symbols, zeroPageMap, isCodeLabel: true);
                 lines.Add($"{label}");
             }
 
@@ -673,7 +679,7 @@ public static class DisassemblerTool
         {
             if (instr.Address is not null && labelAddresses.Contains(instr.Address.Value))
             {
-                var label = GetLabelName(instr.Address.Value, symbols, zeroPageMap);
+                var label = GetLabelName(instr.Address.Value, symbols, zeroPageMap, isCodeLabel: true);
                 lines.Add($"{label}");
             }
 

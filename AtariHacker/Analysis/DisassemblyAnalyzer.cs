@@ -226,19 +226,41 @@ public static class DisassemblyAnalyzer
             dataRegions.Add(addr);
         }
 
-        // If no code entry points at all, bootstrap from the first instruction
-        if (worklist.Count == 0)
+        // Ensure the worklist has at least one non-data address to trace from.
+        // This handles the case where all code entry points are in data regions
+        // (e.g. boot sector headers where JMP/JSR/branch targets land inside the header).
+        // Scan from the beginning to find the first non-data address.
+        if (worklist.Count == 0 || worklist.All(a => references.AbsoluteDataReferences.Contains(a)))
         {
-            var firstAddr = ResolveAddress(segments, baseAddress, 0);
-            if (firstAddr is not null)
+            var bootstrapFound = false;
+            for (var i = 0; i < data.Length; i++)
             {
-                worklist.Enqueue(firstAddr.Value);
+                var addr = ResolveAddress(segments, baseAddress, i);
+                if (addr is not null && !references.AbsoluteDataReferences.Contains(addr.Value))
+                {
+                    if (!bootstrapFound)
+                    {
+                        // Clear the worklist and add only the first non-data address
+                        worklist.Clear();
+                        worklist.Enqueue(addr.Value);
+                        bootstrapFound = true;
+                        break;
+                    }
+                }
             }
         }
 
         while (worklist.Count > 0 && instructionBudget > 0)
         {
             var startAddr = worklist.Dequeue();
+
+            // Skip addresses that are known absolute data references
+            // (e.g. boot sector headers, identified data tables)
+            if (references.AbsoluteDataReferences.Contains(startAddr))
+            {
+                continue;
+            }
+
             if (!visited.Add(startAddr))
             {
                 continue;
