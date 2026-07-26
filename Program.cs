@@ -786,6 +786,84 @@ public static class Program
             atrFsPathArg, atrFsDirOffsetArg, atrFsEntrySizeArg, atrFsFnLenArg, atrFsExtLenArg, atrFsStartOffArg, atrFsSectorCountOffArg);
         atrCommand.AddCommand(atrFsCommand);
 
+        // ─── New forensic commands (v2) ─────────────────────────────────
+
+        var atrSectorMapCommand = new Command("sector-map", "Visualize sector usage across the disk");
+        var atrSmPathArg = new Argument<string>("path", "Path to the ATR file");
+        var atrSmFormatOpt = new Option<string>("--format", () => "text", "Output format: text or ascii");
+        atrSectorMapCommand.AddArgument(atrSmPathArg);
+        atrSectorMapCommand.AddOption(atrSmFormatOpt);
+        atrSectorMapCommand.SetHandler((string path, string format) =>
+            Console.WriteLine(AtrForensicTools.SectorMap(path, format)),
+            atrSmPathArg, atrSmFormatOpt);
+        atrCommand.AddCommand(atrSectorMapCommand);
+
+        var atrFileFragCommand = new Command("file-frag", "Analyze fragmentation of a specific file");
+        var atrFfPathArg = new Argument<string>("path", "Path to the ATR file");
+        var atrFfNameArg = new Argument<string>("name", "Atari DOS filename to analyze");
+        atrFileFragCommand.AddArgument(atrFfPathArg);
+        atrFileFragCommand.AddArgument(atrFfNameArg);
+        atrFileFragCommand.SetHandler((string path, string name) =>
+            Console.WriteLine(AtrForensicTools.FileFragmentation(path, name)),
+            atrFfPathArg, atrFfNameArg);
+        atrCommand.AddCommand(atrFileFragCommand);
+
+        var atrRecoverCommand = new Command("recover", "Recover a deleted file by name");
+        var atrRecPathArg = new Argument<string>("path", "Path to the ATR file");
+        var atrRecNameArg = new Argument<string>("name", "Name of the deleted file to recover");
+        var atrRecOutputArg = new Argument<string>("output", "Output path for the recovered file");
+        atrRecoverCommand.AddArgument(atrRecPathArg);
+        atrRecoverCommand.AddArgument(atrRecNameArg);
+        atrRecoverCommand.AddArgument(atrRecOutputArg);
+        atrRecoverCommand.SetHandler((string path, string name, string output) =>
+            Console.WriteLine(AtrForensicTools.RecoverDeletedFile(path, name, output)),
+            atrRecPathArg, atrRecNameArg, atrRecOutputArg);
+        atrCommand.AddCommand(atrRecoverCommand);
+
+        var atrVtocCommand = new Command("vtoc", "Display the VTOC bitmap");
+        var atrVtocPathArg = new Argument<string>("path", "Path to the ATR file");
+        atrVtocCommand.AddArgument(atrVtocPathArg);
+        atrVtocCommand.SetHandler((string path) => Console.WriteLine(AtrForensicTools.ShowVtoc(path)), atrVtocPathArg);
+        atrCommand.AddCommand(atrVtocCommand);
+
+        // ─── New batch commands (v2) ────────────────────────────────────
+
+        var atrExtractAllCommand = new Command("extract-all", "Extract all files from the disk");
+        var atrEaPathArg = new Argument<string>("path", "Path to the ATR file");
+        var atrEaOutputOpt = new Option<string?>("--output-dir", "Output directory for extracted files");
+        atrExtractAllCommand.AddArgument(atrEaPathArg);
+        atrExtractAllCommand.AddOption(atrEaOutputOpt);
+        atrExtractAllCommand.SetHandler((string path, string? outputDir) =>
+            Console.WriteLine(AtrTools.ExtractAll(path, outputDir)),
+            atrEaPathArg, atrEaOutputOpt);
+        atrCommand.AddCommand(atrExtractAllCommand);
+
+        var atrInjectAllCommand = new Command("inject-all", "Inject multiple files matching a pattern");
+        var atrIaPathArg = new Argument<string>("path", "Path to the ATR file");
+        var atrIaSourceArg = new Argument<string>("source-dir", "Source directory containing files to inject");
+        var atrIaPatternOpt = new Option<string?>("--pattern", "Glob pattern for files to inject (e.g., *.OBJ)");
+        var atrIaDryRunOpt = new Option<bool>("--dry-run", "Show what would be injected without making changes");
+        atrInjectAllCommand.AddArgument(atrIaPathArg);
+        atrInjectAllCommand.AddArgument(atrIaSourceArg);
+        atrInjectAllCommand.AddOption(atrIaPatternOpt);
+        atrInjectAllCommand.AddOption(atrIaDryRunOpt);
+        atrInjectAllCommand.SetHandler((string path, string sourceDir, string? pattern, bool dryRun) =>
+            Console.WriteLine(AtrTools.InjectAll(path, sourceDir, pattern, dryRun)),
+            atrIaPathArg, atrIaSourceArg, atrIaPatternOpt, atrIaDryRunOpt);
+        atrCommand.AddCommand(atrInjectAllCommand);
+
+        var atrBatchCommand = new Command("batch", "Execute a batch of ATR operations from a script file");
+        var atrBatchPathArg = new Argument<string>("path", "Path to the ATR file");
+        var atrBatchScriptArg = new Argument<string>("script", "Path to the batch script file");
+        var atrBatchDryRunOpt = new Option<bool>("--dry-run", "Show what would be done without making changes");
+        atrBatchCommand.AddArgument(atrBatchPathArg);
+        atrBatchCommand.AddArgument(atrBatchScriptArg);
+        atrBatchCommand.AddOption(atrBatchDryRunOpt);
+        atrBatchCommand.SetHandler((string path, string script, bool dryRun) =>
+            Console.WriteLine(AtrWriteTools.BatchOperations(path, script, dryRun)),
+            atrBatchPathArg, atrBatchScriptArg, atrBatchDryRunOpt);
+        atrCommand.AddCommand(atrBatchCommand);
+
         // ═══════════════════════════════════════════════════════════════════
         // STRUCTURAL TEMPLATE COMMANDS
         // ═══════════════════════════════════════════════════════════════════

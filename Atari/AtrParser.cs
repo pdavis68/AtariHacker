@@ -220,6 +220,87 @@ public static class AtrParser
         return count;
     }
 
+    /// <summary>
+    /// Returns a bitmap of sector usage. true = free, false = used.
+    /// Index 0 corresponds to sector 1.
+    /// </summary>
+    public static bool[] GetSectorBitmap(byte[] data, AtrGeometry geometry)
+    {
+        if (geometry.SectorCount < 360)
+        {
+            return Enumerable.Repeat(false, geometry.SectorCount).ToArray();
+        }
+
+        var bitmap = new bool[geometry.SectorCount];
+        var vtoc = ReadSector(data, geometry, 360);
+
+        // First 10 bytes of VTOC are header info; bitmap starts at byte 10
+        if (vtoc.Length <= 10) return bitmap;
+
+        // Sector 1 is the first bit of byte 10, but VTOC bitmap typically starts
+        // at a different offset depending on the DOS version. The standard DOS 2.x
+        // bitmap covers sectors 1-719 starting at VTOC byte 10.
+        var bitmapOffset = 10;
+        for (var sector = 0; sector < geometry.SectorCount; sector++)
+        {
+            var byteIndex = bitmapOffset + (sector / 8);
+            if (byteIndex >= vtoc.Length) break;
+            var bitIndex = sector % 8;
+            bitmap[sector] = (vtoc[byteIndex] & (1 << bitIndex)) != 0;
+        }
+
+        return bitmap;
+    }
+
+    /// <summary>
+    /// Find a deleted directory entry by filename (case-insensitive).
+    /// Returns null if no matching deleted entry is found.
+    /// </summary>
+    public static AtrDirectoryEntry? FindDeletedEntry(byte[] data, string name)
+    {
+        var allEntries = ReadDirectory(data);
+        var normalized = name.Trim().ToUpperInvariant();
+        return allEntries.FirstOrDefault(entry =>
+        {
+            if (!entry.IsDeleted) return false;
+            var fullName = string.IsNullOrWhiteSpace(entry.Extension)
+                ? entry.FileName
+                : $"{entry.FileName}.{entry.Extension}";
+            return string.Equals(entry.FileName, normalized, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(fullName, normalized, StringComparison.OrdinalIgnoreCase);
+        });
+    }
+
+    /// <summary>
+    /// Follow the sector chain starting from startSector, returning the list
+    /// of sector numbers in order. Throws on loop detection.
+    /// </summary>
+    public static List<int> GetSectorChain(byte[] data, AtrGeometry geometry, int startSector)
+    {
+        var chain = new List<int>();
+        var seenSectors = new HashSet<int>();
+        var sector = startSector;
+
+        while (sector != 0)
+        {
+            if (!seenSectors.Add(sector))
+            {
+                throw new InvalidDataException($"Sector chain loop detected at sector {sector}.");
+            }
+
+            chain.Add(sector);
+
+            var rawSector = ReadSector(data, geometry, sector);
+            if (rawSector.Length < 3) break;
+
+            var nextHi = rawSector[^3] & 0x03;
+            var nextLo = rawSector[^2];
+            sector = (nextHi << 8) | nextLo;
+        }
+
+        return chain;
+    }
+
     internal static int SectorFileOffset(AtrGeometry geometry, int sectorNumber)
     {
         if (geometry.SectorSize == 256 && sectorNumber > 3)

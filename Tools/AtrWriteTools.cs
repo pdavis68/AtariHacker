@@ -33,7 +33,7 @@ public static class AtrWriteTools
                 Directory.CreateDirectory(parent);
 
             File.WriteAllBytes(output, extracted);
-            return $"Extracted {match.FileName}.{match.Extension} ({extracted.Length} bytes) → {output}";
+            return $"Extracted {match.FileName}.{match.Extension} ({extracted.Length} bytes) \u2192 {output}";
         }
         catch (Exception ex)
         {
@@ -122,7 +122,7 @@ public static class AtrWriteTools
             // Write modified ATR to disk
             File.WriteAllBytes(modifiedPath, modifiedData);
 
-            return $"Injected {input} ({inputData.Length} bytes) into {match.FileName}.{match.Extension} → {modifiedPath}";
+            return $"Injected {input} ({inputData.Length} bytes) into {match.FileName}.{match.Extension} \u2192 {modifiedPath}";
         }
         catch (Exception ex)
         {
@@ -182,7 +182,7 @@ public static class AtrWriteTools
             fs.Write(header, 0, header.Length);
             fs.Write(new byte[dataBytes], 0, dataBytes);
 
-            return $"Created ATR: {output} ({sectors} × {sectorSize} bytes = {totalSize} bytes total)";
+            return $"Created ATR: {output} ({sectors} \u00d7 {sectorSize} bytes = {totalSize} bytes total)";
         }
         catch (Exception ex)
         {
@@ -211,7 +211,7 @@ public static class AtrWriteTools
             var sectorNum = AddressParser.ParseAddress(sector);
 
             if (sectorNum < 1 || sectorNum > geo.SectorCount)
-                return $"ERROR: Sector {sectorNum} is out of range (1–{geo.SectorCount}).";
+                return $"ERROR: Sector {sectorNum} is out of range (1\u2013{geo.SectorCount}).";
 
             var inputData = File.ReadAllBytes(input);
             var sectorLen = sectorNum <= 3 && geo.SectorSize == 256 ? 128 : geo.SectorSize;
@@ -235,7 +235,7 @@ public static class AtrWriteTools
                 {
                     if (currentSector[i] != inputData[i])
                     {
-                        diffLines.AppendLine($"#     [{i}] {Formatting.HexByte(currentSector[i])} → {Formatting.HexByte(inputData[i])}");
+                        diffLines.AppendLine($"#     [{i}] {Formatting.HexByte(currentSector[i])} \u2192 {Formatting.HexByte(inputData[i])}");
                     }
                 }
                 diffLines.AppendLine("# Run without --dry-run to apply changes.");
@@ -249,7 +249,7 @@ public static class AtrWriteTools
             Array.Copy(inputData, 0, modifiedData, offset, inputData.Length);
 
             File.WriteAllBytes(modifiedPath, modifiedData);
-            return $"Wrote {inputData.Length} bytes to sector {sectorNum} → {modifiedPath}";
+            return $"Wrote {inputData.Length} bytes to sector {sectorNum} \u2192 {modifiedPath}";
         }
         catch (Exception ex)
         {
@@ -375,7 +375,7 @@ public static class AtrWriteTools
             WriteSector(modifiedData, geo, dirEntryOffset / 8 + 361, dirData);
 
             File.WriteAllBytes(modifiedPath, modifiedData);
-            return $"Wrote {parsedName.Name}.{parsedName.Extension} ({inputData.Length} bytes, {requiredSectors} sectors) → {modifiedPath}";
+            return $"Wrote {parsedName.Name}.{parsedName.Extension} ({inputData.Length} bytes, {requiredSectors} sectors) \u2192 {modifiedPath}";
         }
         catch (Exception ex)
         {
@@ -435,6 +435,198 @@ public static class AtrWriteTools
         }
     }
 
+    // ─── Batch Operations ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Execute a batch of ATR operations from a script file.
+    /// Script format: one command per line, with key=value arguments.
+    /// Lines starting with # are comments.
+    /// Supported commands: extract, inject, extract-all, inject-all, sector-map, vtoc, file-frag, recover
+    /// </summary>
+    public static string BatchOperations(string filePath, string scriptPath, bool dryRun = false)
+    {
+        try
+        {
+            if (!File.Exists(filePath))
+                return $"ERROR: ATR file not found: {filePath}";
+            if (!File.Exists(scriptPath))
+                return $"ERROR: Script file not found: {scriptPath}";
+
+            var script = File.ReadAllLines(scriptPath);
+            var results = new List<string>();
+            var lineNumber = 0;
+
+            foreach (var rawLine in script)
+            {
+                lineNumber++;
+                var line = rawLine.Trim();
+
+                // Skip comments and blank lines
+                if (string.IsNullOrWhiteSpace(line) || line.StartsWith('#'))
+                    continue;
+
+                // Strip shell-style redirection
+                var redirectIndex = line.IndexOf('>');
+                if (redirectIndex >= 0)
+                    line = line[..redirectIndex].Trim();
+
+                // Split into command and arguments
+                var parts = ParseBatchLine(line);
+                if (parts.Count == 0)
+                    continue;
+
+                var command = parts[0].ToLowerInvariant();
+                var args = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var part in parts.Skip(1))
+                {
+                    var eq = part.IndexOf('=');
+                    if (eq >= 0)
+                    {
+                        var key = part[..eq].Trim();
+                        var value = part[(eq + 1)..].Trim().Trim('\'', '"');
+                        args[key] = value;
+                    }
+                }
+
+                var result = ExecuteBatchCommand(filePath, command, args, dryRun);
+                results.Add($"# Line {lineNumber}: {rawLine.Trim()}");
+                results.Add(result);
+                results.Add(string.Empty);
+            }
+
+            return string.Join('\n', results);
+        }
+        catch (Exception ex)
+        {
+            return $"ERROR: {ex.Message}";
+        }
+    }
+
+    private static string ExecuteBatchCommand(string filePath, string command, Dictionary<string, string> args, bool dryRun)
+    {
+        try
+        {
+            switch (command)
+            {
+                case "extract":
+                {
+                    var name = args.GetValueOrDefault("name") ?? args.GetValueOrDefault("file") ?? string.Empty;
+                    var output = args.GetValueOrDefault("output") ?? args.GetValueOrDefault("out") ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(name))
+                        return "ERROR: 'name' argument required for extract";
+                    if (string.IsNullOrWhiteSpace(output))
+                        output = name;
+                    return ExtractAtrFile(filePath, name, output);
+                }
+
+                case "inject":
+                {
+                    var input = args.GetValueOrDefault("input") ?? args.GetValueOrDefault("src") ?? string.Empty;
+                    var name = args.GetValueOrDefault("name") ?? args.GetValueOrDefault("file") ?? Path.GetFileName(input);
+                    if (string.IsNullOrWhiteSpace(input))
+                        return "ERROR: 'input' argument required for inject";
+                    if (string.IsNullOrWhiteSpace(name))
+                        return "ERROR: 'name' argument required for inject";
+                    return InjectAtrFile(filePath, name, input, dryRun);
+                }
+
+                case "extract-all":
+                {
+                    var outputDir = args.GetValueOrDefault("output-dir") ?? args.GetValueOrDefault("dir");
+                    return AtrTools.ExtractAll(filePath, outputDir);
+                }
+
+                case "inject-all":
+                {
+                    var sourceDir = args.GetValueOrDefault("source-dir") ?? args.GetValueOrDefault("dir") ?? ".";
+                    var pattern = args.GetValueOrDefault("pattern");
+                    return AtrTools.InjectAll(filePath, sourceDir, pattern, dryRun);
+                }
+
+                case "sector-map":
+                {
+                    var format = args.GetValueOrDefault("format") ?? "text";
+                    return AtrForensicTools.SectorMap(filePath, format);
+                }
+
+                case "vtoc":
+                {
+                    return AtrForensicTools.ShowVtoc(filePath);
+                }
+
+                case "file-frag":
+                {
+                    var name = args.GetValueOrDefault("name") ?? args.GetValueOrDefault("file") ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(name))
+                        return "ERROR: 'name' argument required for file-frag";
+                    return AtrForensicTools.FileFragmentation(filePath, name);
+                }
+
+                case "recover":
+                {
+                    var name = args.GetValueOrDefault("name") ?? args.GetValueOrDefault("file") ?? string.Empty;
+                    var output = args.GetValueOrDefault("output") ?? args.GetValueOrDefault("out") ?? name;
+                    if (string.IsNullOrWhiteSpace(name))
+                        return "ERROR: 'name' argument required for recover";
+                    return AtrForensicTools.RecoverDeletedFile(filePath, name, output);
+                }
+
+                default:
+                    return $"ERROR: Unknown command '{command}'";
+            }
+        }
+        catch (Exception ex)
+        {
+            return $"ERROR: {ex.Message}";
+        }
+    }
+
+    private static List<string> ParseBatchLine(string line)
+    {
+        var parts = new List<string>();
+        var current = new System.Text.StringBuilder();
+        var inQuote = false;
+        var quoteChar = ' ';
+
+        for (var i = 0; i < line.Length; i++)
+        {
+            var c = line[i];
+            if (inQuote)
+            {
+                if (c == quoteChar)
+                {
+                    inQuote = false;
+                }
+                else
+                {
+                    current.Append(c);
+                }
+            }
+            else if (c is '\'' or '"')
+            {
+                inQuote = true;
+                quoteChar = c;
+            }
+            else if (c == ' ' || c == '\t')
+            {
+                if (current.Length > 0)
+                {
+                    parts.Add(current.ToString());
+                    current.Clear();
+                }
+            }
+            else
+            {
+                current.Append(c);
+            }
+        }
+
+        if (current.Length > 0)
+            parts.Add(current.ToString());
+
+        return parts;
+    }
+
     // ─── Helpers ───────────────────────────────────────────────────────────
 
     private static AtrDirectoryEntry? MatchEntry(IReadOnlyList<AtrDirectoryEntry> directory, string name)
@@ -461,7 +653,7 @@ public static class AtrWriteTools
         return (name, "DAT");
     }
 
-    private static string GetModifiedPath(string originalPath)
+    internal static string GetModifiedPath(string originalPath)
     {
         var dir = Path.GetDirectoryName(originalPath) ?? ".";
         var name = Path.GetFileNameWithoutExtension(originalPath);

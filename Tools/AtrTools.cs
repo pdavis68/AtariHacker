@@ -470,6 +470,195 @@ public static class AtrTools
     }
 
     // ─────────────────────────────────────────────────────────────
+    // Batch operations (v2)
+    // ─────────────────────────────────────────────────────────────
+
+    public static string ExtractAll(string filePath, string? outputDir = null)
+    {
+        try
+        {
+            var resolvedPath = Path.GetFullPath(filePath);
+            var data = File.ReadAllBytes(resolvedPath);
+            if (!AtrParser.IsAtr(data))
+                return "ERROR: Not a valid ATR image.";
+
+            if (!AtrParser.HasDosFilesystem(data))
+                return "ERROR: No DOS 2.x filesystem detected.";
+
+            var geometry = AtrParser.ParseGeometry(data);
+            var directory = AtrParser.ReadDirectory(data);
+            var activeFiles = directory.Where(e => !e.IsDeleted).ToList();
+
+            var outputPath = outputDir ?? Path.Combine(Path.GetDirectoryName(resolvedPath) ?? ".", "extracted");
+            Directory.CreateDirectory(outputPath);
+
+            var lines = new List<string>
+            {
+                $"Extracting all files from {Path.GetFileName(resolvedPath)}..."
+            };
+
+            var totalBytes = 0L;
+            for (var i = 0; i < activeFiles.Count; i++)
+            {
+                var entry = activeFiles[i];
+                try
+                {
+                    var extracted = AtrParser.ExtractFile(data, geometry, entry);
+                    var fileName = string.IsNullOrWhiteSpace(entry.Extension)
+                        ? entry.FileName
+                        : $"{entry.FileName}.{entry.Extension}";
+                    var outputFile = Path.Combine(outputPath, fileName);
+                    File.WriteAllBytes(outputFile, extracted);
+                    totalBytes += extracted.Length;
+                    lines.Add($"  [{i + 1}/{activeFiles.Count}] {fileName} → {outputFile} ({extracted.Length:N0} bytes)");
+                }
+                catch (Exception ex)
+                {
+                    var fileName = string.IsNullOrWhiteSpace(entry.Extension)
+                        ? entry.FileName
+                        : $"{entry.FileName}.{entry.Extension}";
+                    lines.Add($"  [{i + 1}/{activeFiles.Count}] {fileName} → ERROR: {ex.Message}");
+                }
+            }
+
+            lines.Add($"  Complete: {activeFiles.Count} files extracted ({totalBytes:N0} bytes total)");
+            return string.Join('\n', lines);
+        }
+        catch (Exception ex)
+        {
+            return $"ERROR: {ex.Message}";
+        }
+    }
+
+    public static string InjectAll(string filePath, string sourceDir, string? pattern = null, bool dryRun = false)
+    {
+        try
+        {
+            var resolvedPath = Path.GetFullPath(filePath);
+            var data = File.ReadAllBytes(resolvedPath);
+            if (!AtrParser.IsAtr(data))
+                return "ERROR: Not a valid ATR image.";
+
+            if (!AtrParser.HasDosFilesystem(data))
+                return "ERROR: No DOS 2.x filesystem detected.";
+
+            var geometry = AtrParser.ParseGeometry(data);
+            var directory = AtrParser.ReadDirectory(data);
+            var activeFiles = directory.Where(e => !e.IsDeleted).ToList();
+
+            var sourcePath = Path.GetFullPath(sourceDir);
+            if (!Directory.Exists(sourcePath))
+                return $"ERROR: Source directory not found: {sourcePath}";
+
+            // Gather source files matching the pattern
+            var searchPattern = pattern ?? "*.*";
+            var sourceFiles = Directory.GetFiles(sourcePath, searchPattern)
+                .Select(f => Path.GetFileName(f))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var modifiedPath = AtrWriteTools.GetModifiedPath(resolvedPath);
+
+            var lines = new List<string>
+            {
+                dryRun
+                    ? $"# DRY RUN: Would inject files into {Path.GetFileName(resolvedPath)}..."
+                    : $"Injecting files into {Path.GetFileName(resolvedPath)} (copy-on-write: {Path.GetFileName(modifiedPath)})..."
+            };
+
+            var totalBytes = 0L;
+            var injected = 0;
+            var skipped = 0;
+
+            foreach (var entry in activeFiles)
+            {
+                var fileName = string.IsNullOrWhiteSpace(entry.Extension)
+                    ? entry.FileName
+                    : $"{entry.FileName}.{entry.Extension}";
+
+                if (!sourceFiles.Contains(fileName))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                var inputFile = Path.Combine(sourcePath, fileName);
+                if (!File.Exists(inputFile))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                var inputData = File.ReadAllBytes(inputFile);
+
+                // Check capacity
+                var fileCapacity = (geometry.SectorSize - 3) * entry.SectorCount;
+                if (inputData.Length > fileCapacity)
+                {
+                    lines.Add($"  [{injected + 1}/{activeFiles.Count}] {fileName} → SKIPPED (input {inputData.Length} bytes exceeds capacity {fileCapacity} bytes)");
+                    skipped++;
+                    continue;
+                }
+
+                if (dryRun)
+                {
+                    lines.Add($"  [{injected + 1}/{activeFiles.Count}] {fileName} → {Path.GetFileName(resolvedPath)} ({inputData.Length:N0} bytes) [dry-run]");
+                }
+                else
+                {
+                    // Inject the file using the existing chain
+                    var sector = entry.StartSector;
+                    var bytesWritten = 0;
+                    var remaining = inputData.Length;
+
+                    while (sector != 0 && remaining > 0)
+                    {
+                        var sectorData = AtrParser.ReadSector(data, geometry, sector);
+                        var dataCapacity = sectorData.Length - 3;
+                        if (sectorData.Length < 3) break;
+
+                        var chunkSize = Math.Min(remaining, dataCapacity);
+                        Array.Copy(inputData, bytesWritten, sectorData, 0, chunkSize);
+                        sectorData[^1] = (byte)chunkSize;
+
+                        // Write sector back to the data buffer
+                        var offset = AtrParser.SectorFileOffset(geometry, sector);
+                        Array.Copy(sectorData, 0, data, offset, sectorData.Length);
+
+                        bytesWritten += chunkSize;
+                        remaining -= chunkSize;
+
+                        var nextHi = sectorData[^3] & 0x03;
+                        var nextLo = sectorData[^2];
+                        sector = (nextHi << 8) | nextLo;
+                    }
+
+                    lines.Add($"  [{injected + 1}/{activeFiles.Count}] {fileName} → {Path.GetFileName(resolvedPath)} ({inputData.Length:N0} bytes) ✓");
+                }
+
+                injected++;
+                totalBytes += inputData.Length;
+            }
+
+            if (!dryRun)
+            {
+                File.WriteAllBytes(modifiedPath, data);
+            }
+
+            var note = skipped > 0
+                ? $"\n  Note: {skipped} file(s) in ATR had no matching source file in {sourceDir}"
+                : string.Empty;
+
+            lines.Add($"  Complete: {injected} files injected ({totalBytes:N0} bytes total){note}");
+
+            return string.Join('\n', lines);
+        }
+        catch (Exception ex)
+        {
+            return $"ERROR: {ex.Message}";
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // Private helpers
     // ─────────────────────────────────────────────────────────────
 
