@@ -10,13 +10,13 @@ A command-line toolkit for reverse-engineering Atari 8-bit binaries, ROMs, and A
 ## Build
 
 ```bash
-dotnet build
+dotnet build AtariHacker/AtariHacker.csproj
 ```
 
 Publish a release build:
 
 ```bash
-dotnet publish -c Release -o publish
+dotnet publish AtariHacker/AtariHacker.csproj -c Release -o publish
 ./publish/AtariHacker --help
 ```
 

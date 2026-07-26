@@ -24,11 +24,11 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore dependencies
-        run: dotnet restore
+        run: dotnet restore AtariHacker/AtariHacker.csproj
 
       - name: Build
-        run: dotnet build --configuration Release --no-restore
+        run: dotnet build AtariHacker/AtariHacker.csproj --configuration Release --no-restore
 
       - name: Test (if tests exist)
-        run: dotnet test --configuration Release --no-build --verbosity normal
+        run: dotnet test AtariHacker/AtariHacker.csproj --configuration Release --no-build --verbosity normal
         continue-on-error: true
