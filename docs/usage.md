@@ -1,6 +1,6 @@
 # AtariHacker Usage Guide
 
-A command-line toolkit for reverse-engineering **Atari 8-bit binaries**, **ROM images**, and **ATR disk images**. It provides 6502 disassembly with multi-pass analysis, code/data separation, segment-aware output, ATR file manipulation, batch scripting, and a comprehensive Atari hardware symbol table spanning GTIA, POKEY, PIA, ANTIC, OS ROM entry points, and zero-page OS variables.
+A command-line toolkit for reverse-engineering **Atari 8-bit binaries**, **ROM images**, and **ATR disk images**. It provides 6502 disassembly with multi-pass analysis, code/data separation, segment-aware output, ATR file manipulation, batch scripting, pattern libraries, structural matching, data-flow tracing, control-flow analysis, stack analysis, and a comprehensive Atari hardware symbol table spanning GTIA, POKEY, PIA, ANTIC, OS ROM entry points, and zero-page OS variables.
 
 ---
 
@@ -30,6 +30,12 @@ A command-line toolkit for reverse-engineering **Atari 8-bit binaries**, **ROM i
    - [`atr` — ATR Disk Image Operations](#418-atr--atr-disk-image-operations)
    - [`diff` — Binary File Comparison](#419-diff--binary-file-comparison)
    - [`hex-to-decimal` / `decimal-to-hex` — Conversion Utilities](#420-hex-to-decimal--decimal-to-hex--conversion-utilities)
+   - [`trace-access` — Data Flow Tracing](#421-trace-access--data-flow-tracing)
+   - [`detect-patterns` — Control Flow Pattern Detection](#422-detect-patterns--control-flow-pattern-detection)
+   - [`stack-analyze` — Stack Usage Analysis](#423-stack-analyze--stack-usage-analysis)
+   - [`patterns` — Pattern Library Management](#424-patterns--pattern-library-management)
+   - [`struct` — Structural Pattern Matching](#425-struct--structural-pattern-matching)
+   - [`analyze-disassemble` / `probe-and-segment` / `analyze-full` — Compound Commands](#426-analyze-disassemble--probe-and-segment--analyze-full--compound-commands)
 5. [Multi-Pass Analysis Engine](#5-multi-pass-analysis-engine)
 6. [Data Probing Heuristics](#6-data-probing-heuristics)
 7. [Atari Hardware Symbol Table](#7-atari-hardware-symbol-table)
@@ -64,8 +70,48 @@ atarihacker disassemble 0 100
 |--------|-------------|
 | `-t, --target <path>` | Target file path (ATR, ROM, XEX). Overrides `.atari-hacker.config`. |
 | `-c, --config <path>` | Path to config file. Default: searches current and parent directories for `.atari-hacker.config`. |
+| `-v, --verbose` | Show execution metadata (execution time, bytes processed, symbol count, etc.). Metadata is emitted as `# `-prefixed lines before the main output. |
+| `--format <fmt>` | Output format for structured commands: `text` (default), `csv`, `tsv`, or `kv`. See individual command docs for support. |
 | `--version` | Show version information |
 | `-?, -h, --help` | Show help |
+
+### Verbose Mode
+
+When `--verbose` (or `-v`) is set, execution metadata is prepended to command output as `# `-prefixed lines:
+
+```
+# execution_ms=142
+# bytes_processed=16384
+# session_target=game.xex
+# session_size=32768
+# symbol_count=215
+# segment_count=4
+<main command output follows...>
+```
+
+This format is shell-compatible (lines starting with `#` are ignored by bash) and easy for LLMs to parse.
+
+### Structured Output Formats
+
+Commands that support `--format` can produce output in four formats:
+
+| Format | Description |
+|--------|-------------|
+| `text` | Default human-readable format |
+| `csv`  | Comma-separated values with header row |
+| `tsv`  | Tab-separated values with header row |
+| `kv`   | Key=value pairs, one per line |
+
+```bash
+# CSV output
+atarihacker symbol list --format csv
+
+# TSV output piped to file
+atarihacker coverage $0C00 $1CFF --format tsv > coverage.tsv
+
+# KV output for LLM consumption
+atarihacker analyze --format kv
+```
 
 ### Config File
 
@@ -416,11 +462,11 @@ Performs multi-pass analysis to build a reference graph and identify code/data r
 
 **Options:**
 
-| Option | Description |
-|--------|-------------|
-| `--start-address <addr>` | Starting address for analysis (hex) |
-| `--bytes <n>` | Number of bytes to analyze |
-| `--format <fmt>` | Output format: `summary` (default), `graph`, `labels`, or `full` |
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--start-address <addr>` | — | Starting address for analysis (hex) |
+| `--bytes <n>` | — | Number of bytes to analyze |
+| `--format <fmt>` | `summary` | Output format: `summary`, `graph`, `labels`, `full`, `csv`, `tsv`, or `kv` |
 
 #### Output Formats
 
@@ -487,7 +533,7 @@ atarihacker analyze --start-address $0C00 --bytes 4096
 ### 4.9 `probe` — Data Type Identification
 
 ```
-probe <start> <end>
+probe <start> <end> [options]
 ```
 
 Analyzes a memory range to identify the likely data type using seven heuristic detection methods. This is invaluable for understanding unknown data regions in a ROM.
@@ -499,8 +545,17 @@ Analyzes a memory range to identify the likely data type using seven heuristic d
 | `start` | Start address (hex) |
 | `end` | End address (hex, inclusive) |
 
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--struct` | Enable structural template matching after heuristic detection (see [`struct`](#425-struct--structural-pattern-matching)) |
+| `--format <fmt>` | Output format: `text` (default), `csv`, `tsv`, or `kv` |
+
 ```bash
 atarihacker probe $1D00 $1FFF
+atarihacker probe $0C00 $1CFF --struct
+atarihacker probe $1D00 $1FFF --format csv
 ```
 
 **Detection heuristics** (see [Section 6](#6-data-probing-heuristics) for full details):
@@ -546,7 +601,7 @@ Generates a call graph showing subroutine relationships based on JSR instruction
 |--------|---------|-------------|
 | `--start-address <addr>` | — | Root address for the call graph (hex) |
 | `--depth <n>` | 3 | Maximum call depth |
-| `--format <fmt>` | `mermaid` | Output format: `mermaid` or `text` |
+| `--format <fmt>` | `mermaid` | Output format: `mermaid`, `text`, `csv`, `tsv`, or `kv` |
 
 #### Mermaid Format
 
@@ -590,7 +645,7 @@ atarihacker callgraph --depth 4 --format text
 ### 4.11 `coverage` — Code Coverage Analysis
 
 ```
-coverage <start> <end>
+coverage <start> <end> [options]
 ```
 
 Analyzes which bytes in an address range are classified as code versus data by the multi-pass analysis engine.
@@ -602,8 +657,15 @@ Analyzes which bytes in an address range are classified as code versus data by t
 | `start` | Start address (hex) |
 | `end` | End address (hex, inclusive) |
 
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--format <fmt>` | `text` | Output format: `text`, `csv`, `tsv`, or `kv` |
+
 ```bash
 atarihacker coverage $0C00 $1CFF
+atarihacker coverage $0C00 $1CFF --format csv
 ```
 
 **Sample output:**
@@ -640,6 +702,8 @@ Statically traces execution flow from a given starting address, following JSR ca
 |--------|---------|-------------|
 | `--max-depth <n>` | 5 | Maximum call depth for JSR tracing |
 | `--max-instructions <n>` | 500 | Instruction budget to prevent runaway analysis |
+| `--stack` | — | Enable stack depth tracking; annotates each trace line with current stack depth |
+| `--format <fmt>` | `text` | Output format: `text`, `csv`, `tsv`, or `kv` |
 
 The tracer:
 - Follows sequential execution until `RTS`, `RTI`, or `BRK`
@@ -648,12 +712,15 @@ The tracer:
 - Stops at indirect jumps (`JMP (addr)`) — these cannot be resolved statically
 - Detects loops and infinite cycles
 - Shows labels and hardware register names in the trace
+- With `--stack`, tracks virtual stack pointer through JSR/RTS/PHA/PLA/PHP/PLP/RTI/BRK
 
 **Note about boot sectors:** If the address at `$0700` disassembles as `BRK` (opcode `$00`), the tool provides a hint that the actual boot code starts at `$0706` (after the 6-byte boot header).
 
 ```bash
 atarihacker trace $0700
 atarihacker trace $1540 --max-depth 10 --max-instructions 1000
+atarihacker trace $C000 --stack
+atarihacker trace $C000 --stack --format kv
 ```
 
 **Sample output:**
@@ -676,10 +743,10 @@ $0700 (boot_start)
 ### 4.13 `xref` — Cross-Reference Search
 
 ```
-xref <address>
+xref <address> [options]
 ```
 
-Finds all instructions in the loaded binary that reference a target memory address. References are grouped by instruction type and include the mnemonic and formatted operand.
+Finds all instructions in the loaded binary that reference a target memory address. References are classified by access type (read, write, execute, read-write) and include procedure/segment context when available.
 
 **Arguments:**
 
@@ -687,21 +754,49 @@ Finds all instructions in the loaded binary that reference a target memory addre
 |----------|-------------|
 | `address` | Target address to cross-reference |
 
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--type <type>` | — | Filter by access type: `read`, `write`, `execute`, or `read-write` |
+| `--format <fmt>` | `text` | Output format: `text`, `csv`, `tsv`, or `kv` |
+
+**Access type classification:**
+
+| Mnemonic Group | Access Type | Examples |
+|----------------|-------------|----------|
+| Load instructions | `read` | LDA, LDX, LDY, BIT, CMP, ADC, SBC, AND, ORA, EOR |
+| Store instructions | `write` | STA, STX, STY |
+| Modify instructions | `read-write` | INC, DEC, ASL, LSR, ROL, ROR |
+| Jump/call | `execute` | JSR, JMP |
+
 ```bash
+# Show all references
 atarihacker xref $D400
-atarihacker xref $1540
+
+# Show only writes to the target
+atarihacker xref $D000 --type write
+
+# Show only reads from the target
+atarihacker xref $D000 --type read
+
+# Show only calls to the target
+atarihacker xref $E410 --type execute
+
+# CSV output
+atarihacker xref $D400 --format csv
 ```
 
 **Sample output:**
 ```
 Cross-references to $D400 (DMACTL):
-  LDA:
-    $0C12  LDA DMACTL
-    $1550  LDA DMACTL
-  STA:
-    $0702  STA DMACTL
-    $0C80  STA DMACTL
-    $1542  STA DMACTL
+  read:
+    $0C12  LDA DMACTL          ; in procedure update_dma
+    $1550  LDA DMACTL          ; in procedure read_joystick
+  write:
+    $0702  STA DMACTL          ; in procedure boot_init
+    $0C80  STA DMACTL          ; in procedure set_graphics
+    $1542  STA DMACTL          ; in procedure game_init
 ```
 
 ---
@@ -712,7 +807,7 @@ Manages named labels for memory addresses. Symbols are used in disassembly outpu
 
 #### `symbol define <address> <label>`
 
-Add or update a named label for a memory address.
+Add or update a named label for a memory address. Idempotent — re-running with the same label/comment produces identical state.
 
 **Arguments:**
 
@@ -726,14 +821,16 @@ Add or update a named label for a memory address.
 | Option | Description |
 |--------|-------------|
 | `--comment <text>` | Optional comment |
+| `--force` | Allow overwriting built-in hardware symbols |
 
 ```bash
 atarihacker symbol define $1540 game_init --comment "Main game entry point"
+atarihacker symbol define $D000 GTIA_WRITE --force
 ```
 
 #### `symbol remove <address>`
 
-Remove a user-defined symbol. Hardware symbols cannot be removed.
+Remove a user-defined symbol. Hardware symbols cannot be removed. Idempotent — succeeds silently if the symbol is already removed.
 
 **Arguments:**
 
@@ -764,7 +861,7 @@ User-defined : False
 
 #### `symbol list [options]`
 
-List symbols in the symbol table.
+List symbols in the symbol table. Symbols are sorted by address (ascending), then by label (alphabetical).
 
 **Options:**
 
@@ -772,6 +869,7 @@ List symbols in the symbol table.
 |--------|---------|-------------|
 | `--include-hardware` | — | Include built-in hardware symbols |
 | `--filter <text>` | — | Optional substring filter |
+| `--format <fmt>` | `text` | Output format: `text`, `csv`, `tsv`, or `kv` |
 
 ```bash
 # List only user-defined symbols
@@ -782,6 +880,9 @@ atarihacker symbol list --include-hardware
 
 # Filter by name
 atarihacker symbol list --filter "DMA" --include-hardware
+
+# CSV output for LLM processing
+atarihacker symbol list --format csv
 ```
 
 #### `symbol set [options]`
@@ -840,20 +941,34 @@ atarihacker segment define name=game_data start=$1D00 end=$BBA4 type=data
 
 If segment overlaps are detected, a warning is shown but the segment is still defined.
 
-#### `segment remove <name>`
+#### `segment remove <name> [options]`
 
-Remove a defined memory segment by name.
+Remove a defined memory segment by name. Idempotent — succeeds silently if the segment is already removed.
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--dry-run` | Show what would be removed without making changes |
 
 ```bash
 atarihacker segment remove boot_loader
+atarihacker segment remove boot_loader --dry-run
 ```
 
-#### `segment list`
+#### `segment list [options]`
 
-List all defined memory segments and show gaps between them.
+List all defined memory segments and show gaps between them. Segments are sorted by start address, then by name.
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--format <fmt>` | `text` | Output format: `text`, `csv`, `tsv`, or `kv` |
 
 ```bash
 atarihacker segment list
+atarihacker segment list --format csv
 ```
 
 **Output example:**
@@ -868,12 +983,19 @@ Gaps between segments:
   $0880–$0BFF (896 bytes)
 ```
 
-#### `segment clear`
+#### `segment clear [options]`
 
 Clear all defined segments.
 
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--dry-run` | Show list of segments that would be removed without making changes |
+
 ```bash
 atarihacker segment clear
+atarihacker segment clear --dry-run
 ```
 
 #### `segment linker-config <output>`
@@ -1294,6 +1416,171 @@ Define a custom filesystem layout for non-DOS ATR images. This stores the filesy
 atarihacker atr filesystem custom.atr $1000 32 12 0 4 6
 ```
 
+#### `atr sector-map <path>`
+
+Visualize sector usage across the disk, showing which sectors are used for boot, file data, VTOC, directory, or free.
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--format <fmt>` | `text` | Output format: `text` or `ascii` (ASCII art bar) |
+
+```bash
+atarihacker atr sector-map GAME.ATR
+atarihacker atr sector-map GAME.ATR --format ascii
+```
+
+**Output (text format):**
+```
+Sector map for GAME.ATR (720 sectors, SD):
+  Sectors 001-003: [BOOT] Boot loader
+  Sectors 004-359: [DATA] File data
+  Sectors 360-360: [VTOC] Volume Table of Contents
+  Sectors 361-368: [DIR]  Directory
+  Sectors 369-720: [FREE] Free
+
+Usage: 368/720 sectors (51.1% used)
+Fragmentation: 12 free regions, largest: 152 sectors
+```
+
+#### `atr file-frag <path> <name>`
+
+Analyze fragmentation of a specific file, showing the sector chain and gaps.
+
+```bash
+atarihacker atr file-frag GAME.ATR AGENT.OBJ
+```
+
+**Output:**
+```
+Fragmentation analysis for AGENT.OBJ:
+  File size: 12,345 bytes
+  Total sectors: 97
+  Fragments: 5
+  Fragmentation ratio: 5.2% (low)
+
+  Sector chain:
+    042 → 045 → 048 → 051 → 054 → ...
+    Gap: 042→045 (2 sectors), 045→048 (2 sectors), ...
+```
+
+#### `atr recover <path> <name> <output>`
+
+Recover a deleted file from an ATR image by matching the filename against deleted directory entries (those with the `$80` deleted flag).
+
+```bash
+atarihacker atr recover GAME.ATR DELETED.OBJ recovered/DELETED.OBJ
+```
+
+**Output:**
+```
+Recovering deleted file 'DELETED.OBJ'...
+  Directory entry found at sector 365, offset 4
+  Status: Deleted (flag = $80)
+  Original size: 8,192 bytes
+  Start sector: 200
+  Recovering sector chain starting at 200...
+  Recovery complete: 8,192 bytes written to recovered/DELETED.OBJ
+```
+
+#### `atr vtoc <path>`
+
+Display the VTOC (Volume Table of Contents) bitmap, showing free and used sector ranges.
+
+```bash
+atarihacker atr vtoc GAME.ATR
+```
+
+**Output:**
+```
+VTOC analysis for GAME.ATR:
+  Sector: 360
+  Total sectors: 720
+  Free sectors: 352
+  Used sectors: 368
+
+  Bitmap (first 32 bytes):
+    FF FF FF FF FF FF FF FF  FF FF FF FF FF FF FF FF
+    FF FF FF FF FF FF FF FF  FF FF FF FF 00 00 00 00
+    ...
+
+  Free sector ranges:
+    369-720 (352 sectors)
+```
+
+#### `atr extract-all <path>`
+
+Extract all files from an ATR disk image to the host filesystem.
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--output-dir <dir>` | Output directory (default: current directory) |
+
+```bash
+atarihacker atr extract-all GAME.ATR --output-dir extracted/
+```
+
+**Output:**
+```
+Extracting all files from GAME.ATR...
+  [1/8] AGENT.OBJ → extracted/AGENT.OBJ (12,345 bytes)
+  [2/8] LEVEL1.DAT → extracted/LEVEL1.DAT (4,096 bytes)
+  ...
+  Complete: 8 files extracted (57,529 bytes total)
+```
+
+#### `atr inject-all <path> <source-dir>`
+
+Inject multiple files into an ATR image, matching by filename. Uses copy-on-write (creates `.modified` copy).
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `path` | Path to the ATR file |
+| `source-dir` | Source directory containing files to inject |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--pattern <glob>` | Glob pattern to filter source files (e.g., `*.OBJ`) |
+| `--dry-run` | Show what would be injected without making changes |
+
+```bash
+atarihacker atr inject-all GAME.ATR build/ --pattern "*.OBJ"
+atarihacker atr inject-all GAME.ATR build/ --dry-run
+```
+
+#### `atr batch <path> <script>`
+
+Execute a batch of ATR operations from a script file. Supports `extract`, `inject`, `extract-all`, `sector-map`, and other ATR commands.
+
+```bash
+atarihacker atr batch GAME.ATR operations.txt
+```
+
+**Script format:**
+```
+# operations.txt
+extract AGENT.OBJ extracted/
+inject build/AGENT.OBJ AGENT.OBJ
+extract-all --output-dir extracted/
+sector-map --format ascii
+```
+
+**Dry-run support:** The `inject`, `inject-all`, `write-sector`, and `write-file` commands accept `--dry-run` to preview changes without modifying the ATR:
+
+```bash
+atarihacker atr inject game.atr AGENT.OBJ build/AGENT.OBJ --dry-run
+atarihacker atr write-sector build/disk.atr 1 boot.bin --dry-run
+atarihacker atr write-file build/disk.atr AGENT.OBJ build/AGENT.OBJ --dry-run
+atarihacker atr create build/disk.atr 720 sd --dry-run
+```
+
 ---
 
 ### 4.19 `diff` — Binary File Comparison
@@ -1371,6 +1658,490 @@ Convert a decimal integer to hexadecimal.
 ```bash
 atarihacker decimal-to-hex 54272
 # Output: 54272 = $D400
+```
+
+---
+
+### 4.21 `trace-access` — Data Flow Tracing
+
+```
+trace-access <address> [options]
+```
+
+Statically traces data flow through memory by finding read/write chains for a target address. This is invaluable for understanding how data structures are used without runtime execution.
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `address` | Target memory address to trace |
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--direction <dir>` | `forward` | Trace direction: `forward` (from writes to reads) or `backward` (from reads to writes) |
+| `--depth <n>` | 5 | Maximum call depth for tracing |
+| `--format <fmt>` | `text` | Output format: `text`, `csv`, `tsv`, or `kv` |
+
+**Algorithm:**
+
+- **Forward trace**: Starts from instructions that **write** to the target address, follows execution forward to find instructions that **read** from it.
+- **Backward trace**: Starts from instructions that **read** from the target address, walks backward through the instruction stream to find instructions that **write** to it.
+- Builds a data flow graph showing the chain of read/write operations.
+
+```bash
+# Forward trace (default)
+atarihacker trace-access $B000
+
+# Backward trace
+atarihacker trace-access $B000 --direction backward
+
+# With depth limit
+atarihacker trace-access $B000 --depth 10
+
+# KV output for LLM consumption
+atarihacker trace-access $B000 --format kv
+```
+
+**Sample output:**
+```
+Data flow for $B000 (score_buffer):
+  Written by:
+    $C040: STA $B000       ; in procedure update_score
+    $C0A0: STA $B000       ; in procedure init_game
+  Read by:
+    $C200: LDA $B000       ; in procedure draw_score
+    $C2A0: CMP $B000       ; in procedure check_high_score
+
+Data flow chain:
+  $C040 (write) ──→ $C200 (read)  [fall-through, 3 instructions]
+  $C0A0 (write) ──→ $C200 (read)  [via JSR $C1F0, 2 calls deep]
+```
+
+---
+
+### 4.22 `detect-patterns` — Control Flow Pattern Detection
+
+```
+detect-patterns [options]
+```
+
+Scans analyzed code for known control flow patterns: state machines, jump tables, coroutines, and interrupt handlers.
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--type <type>` | — | Pattern type filter: `state-machine`, `jump-table`, `coroutine`, or `interrupt` |
+| `--format <fmt>` | `text` | Output format: `text`, `csv`, `tsv`, or `kv` |
+
+**Detected patterns:**
+
+| Pattern | Description |
+|---------|-------------|
+| **State machine** | Dispatch loop that reads a state variable and jumps to a handler via computed address |
+| **Jump table** | Indexed jump (`JMP (table,X)`) with enumerated targets |
+| **Coroutine** | Routines that chain via `JMP` instead of `JSR`/`RTS` |
+| **Interrupt handler** | Code reachable only from hardware vectors (`$FFFA`–`$FFFF`) |
+
+```bash
+# Detect all patterns
+atarihacker detect-patterns
+
+# Filter by type
+atarihacker detect-patterns --type state-machine
+atarihacker detect-patterns --type jump-table
+
+# CSV output
+atarihacker detect-patterns --format csv
+```
+
+**Sample output:**
+```
+State machine detected at $C000:
+  State variable: $00E0 (GAMESTAT)
+  Jump table: $D000
+  Entries: 8 (estimated)
+  Handlers: $D100, $D200, $D300, $D400, ...
+
+Jump table detected at $D000:
+  Type: Absolute indirect (JMP ($D000,X))
+  Entries: 12
+  Targets: $C100, $C200, $C300, $C310, $C320, ...
+
+Coroutine chain detected:
+  $C000: JMP $C100
+  $C100: JMP $C200
+  $C200: JMP $C000
+  (circular dependency detected)
+
+Interrupt handler detected at $E000:
+  Type: NMI (from $FFFA)
+  Terminates with: RTI
+  Saves: A, X, Y, status
+```
+
+---
+
+### 4.23 `stack-analyze` — Stack Usage Analysis
+
+```
+stack-analyze <address> [options]
+```
+
+Analyzes stack depth and balance at a given address by simulating a virtual stack pointer through the instruction stream.
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `address` | Starting memory address for stack analysis |
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--max-instructions <n>` | 1000 | Instruction budget to prevent runaway analysis |
+
+**Stack effects tracked:**
+
+| Operation | Stack Effect |
+|-----------|-------------|
+| `JSR addr` | Push return address (+2 bytes) |
+| `RTS` | Pop return address (-2 bytes) |
+| `PHA` | Push A (+1 byte) |
+| `PLA` | Pop A (-1 byte) |
+| `PHP` | Push status (+1 byte) |
+| `PLP` | Pop status (-1 byte) |
+| `RTI` | Pop status + return address (-4 bytes) |
+| `BRK` | Push return + status (+4 bytes) |
+
+```bash
+atarihacker stack-analyze $C000
+atarihacker stack-analyze $C000 --max-instructions 2000
+```
+
+**Sample output:**
+```
+Stack analysis for $C000 (update_score):
+  Entry stack depth: 2 (return address on stack)
+  Maximum depth: 6
+  Minimum depth: 2
+  Exit stack depth: 2 (balanced)
+
+  Stack operations:
+    $C010: PHA          ; depth 2→3 (save A)
+    $C020: JSR $D000    ; depth 3→5 (call helper)
+    $C030: PLA          ; depth 5→4 (restore A)
+    $C040: RTS          ; depth 4→2 (return)
+
+  Warnings:
+    - Stack depth at exit (2) matches entry (2): ✓ balanced
+    - No unbalanced branches detected
+```
+
+---
+
+### 4.24 `patterns` — Pattern Library Management
+
+Manages a persistent library of named byte patterns stored in `.atari-hacker-patterns.json`. Patterns can be tagged, categorized, and reused across sessions.
+
+#### `patterns list [options]`
+
+List all saved patterns.
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--tag <tag>` | Filter by tag |
+| `--category <cat>` | Filter by category |
+| `--query <text>` | Substring filter on name/description |
+
+```bash
+atarihacker patterns list
+atarihacker patterns list --tag antic
+atarihacker patterns list --category hardware
+```
+
+#### `patterns add <name> <hex>`
+
+Save a new pattern from inline hex bytes.
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `name` | Pattern name (e.g., `jsr_rts_stub`) |
+| `hex` | Hex byte pattern with `??` wildcards |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--description <text>` | Optional description |
+| `--tag <tag>` | Tag (can be specified multiple times) |
+| `--category <cat>` | Category (default: `uncategorized`) |
+| `--force` | Overwrite existing pattern with the same name |
+
+```bash
+atarihacker patterns add jsr_rts_stub "20 ?? ?? 60" \
+    --description "Common 6502 stub" --tag stub --tag common
+```
+
+#### `patterns remove <name>`
+
+Delete a pattern by name.
+
+#### `patterns show <name>`
+
+Display full details of a named pattern.
+
+```bash
+atarihacker patterns show jsr_rts_stub
+```
+
+**Output:**
+```
+Pattern: jsr_rts_stub
+  Description: Common 6502 stub: JSR to address, RTS
+  Hex: 20 ?? ?? 60
+  Tags: stub, common
+  Category: code-patterns
+  Created: 2026-07-25T12:00:00Z
+```
+
+#### `patterns search <name>`
+
+Search the loaded binary using a saved pattern from the library.
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--max-results <n>` | 50 | Maximum number of matches |
+
+```bash
+atarihacker patterns search jsr_rts_stub --max-results 20
+```
+
+This is equivalent to `find-pattern "20 ?? ?? 60"` but with the advantage of documentation, tagging, and reusability.
+
+#### `patterns import <path>`
+
+Import patterns from a JSON file, merging with the existing library.
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--force` | Overwrite existing patterns with the same name |
+
+```bash
+atarihacker patterns import shared_patterns.json
+```
+
+#### `patterns export [options]`
+
+Export patterns to a JSON file.
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--tag <tag>` | Export only patterns with this tag |
+| `--category <cat>` | Export only patterns in this category |
+
+```bash
+atarihacker patterns export --tag antic > antic_patterns.json
+```
+
+---
+
+### 4.25 `struct` — Structural Pattern Matching
+
+Defines and matches reusable structural templates against memory ranges. Templates describe the layout of data structures (level headers, sprite tables, music data, etc.) with field types, offsets, and validation rules.
+
+Templates are stored alongside patterns in `.atari-hacker-patterns.json`.
+
+#### `struct define <path>`
+
+Define a new structural template from a JSON file.
+
+**Template format:**
+```json
+{
+  "name": "atari_level_header",
+  "description": "Common Atari game level header structure",
+  "fields": [
+    { "name": "width", "offset": 0, "type": "byte", "description": "Level width in tiles" },
+    { "name": "height", "offset": 1, "type": "byte", "description": "Level height in tiles" },
+    { "name": "tile_map_ptr", "offset": 2, "type": "word_le", "description": "Pointer to tile map" },
+    { "name": "palette", "offset": 11, "type": "bytes", "length": 4, "description": "4-byte palette" }
+  ],
+  "validation": [
+    { "field": "width", "min": 1, "max": 40 },
+    { "field": "height", "min": 1, "max": 24 }
+  ],
+  "tags": ["level", "game-structure"],
+  "category": "game-templates"
+}
+```
+
+**Field types:**
+
+| Type | Description | Size |
+|------|-------------|------|
+| `byte` | Unsigned 8-bit integer | 1 byte |
+| `word_le` | 16-bit little-endian address/value | 2 bytes |
+| `word_be` | 16-bit big-endian value | 2 bytes |
+| `bytes` | Raw byte sequence (requires `length`) | variable |
+| `string` | Null-terminated ATASCII string | variable |
+| `bitfield` | Individual bit flags | 1 byte |
+| `skip` | Padding/alignment gap | variable |
+
+```bash
+atarihacker struct define level_header.json
+```
+
+#### `struct list [options]`
+
+List available templates.
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--tag <tag>` | Filter by tag |
+| `--category <cat>` | Filter by category |
+
+```bash
+atarihacker struct list
+atarihacker struct list --tag game-structure
+```
+
+#### `struct show <name>`
+
+Show template details, including all fields and validation rules.
+
+```bash
+atarihacker struct show atari_level_header
+```
+
+#### `struct match <start> <end>`
+
+Scan a memory range for template matches. Scans each candidate address, reads fields at their offsets, validates against constraints, and returns ranked matches with confidence scores.
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `start` | Start address (hex) |
+| `end` | End address (hex, inclusive) |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--template <name>` | Match against a specific template only (default: all templates) |
+
+```bash
+# Match against all templates
+atarihacker struct match $0C00 $1CFF
+
+# Match against a specific template
+atarihacker struct match $0C00 $1CFF --template atari_level_header
+```
+
+**Sample output:**
+```
+Structural matches in $0C00–$1CFF:
+  Template: atari_level_header (confidence: 0.85)
+    Address: $0D00
+    width: 20
+    height: 15
+    tile_map_ptr: $A000
+    palette: A0 B0 C0 D0
+
+  Template: atari_level_header (confidence: 0.72)
+    Address: $0E00
+    width: 30
+    height: 10
+    tile_map_ptr: $B000
+    palette: 10 20 30 40
+```
+
+#### `struct remove <name>`
+
+Delete a template by name.
+
+#### `struct import <path>`
+
+Import templates from a JSON file.
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--force` | Overwrite existing templates with the same name |
+
+#### `struct export [options]`
+
+Export templates to a JSON file.
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--tag <tag>` | Export only templates with this tag |
+| `--category <cat>` | Export only templates in this category |
+
+```bash
+atarihacker struct export --tag game-structure > my_templates.json
+```
+
+---
+
+### 4.26 `analyze-disassemble` / `probe-and-segment` / `analyze-full` — Compound Commands
+
+Compound commands combine common multi-step workflows into a single command, reducing CLI roundtrips for LLM-driven orchestration.
+
+#### `analyze-disassemble <start> <bytes> [options]`
+
+Runs the multi-pass analyzer then immediately disassembles the analyzed range — equivalent to running `analyze` followed by `disassemble` with `--analyze`.
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `start` | Start address (hex) |
+| `bytes` | Number of bytes to disassemble |
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--format <fmt>` | `listing` | Output format: `listing`, `ca65`, `atasm`, or `mac65` |
+
+```bash
+atarihacker analyze-disassemble $0C00 5376 --format ca65
+```
+
+#### `probe-and-segment <start> <end>`
+
+Runs `probe` on a range, then automatically creates a segment definition based on the highest-confidence detection.
+
+```bash
+atarihacker probe-and-segment $1D00 $2FFF
+```
+
+#### `analyze-full`
+
+Runs full analysis, generates labels, creates segments from detected code/data regions, and outputs a summary — all in one command.
+
+```bash
+atarihacker analyze-full
 ```
 
 ---
@@ -1653,34 +2424,61 @@ command_name param1=value1 param2=value2
 | `find_pattern` | `find-pattern` | `pattern`; optional: `maxResults` |
 | `find_strings` | `find-strings` | optional: `minLength`, `encoding`, `filter`, `maxResults` |
 | `analyze_disassembly` | `analyze` | optional: `startAddress`, `numBytes`, `format` |
-| `probe_data` | `probe` | `start`, `end` |
+| `probe_data` | `probe` | `start`, `end`; optional: `struct` |
 | `generate_callgraph` | `callgraph` | optional: `startAddress`, `depth`, `format` |
-| `analyze_coverage` | `coverage` | `start`, `end` |
-| `trace_control_flow` | `trace` | `address`; optional: `maxDepth` |
-| `x_ref` | `xref` | `address` |
+| `analyze_coverage` | `coverage` | `start`, `end`; optional: `format` |
+| `trace_control_flow` | `trace` | `address`; optional: `maxDepth`, `stack` |
+| `trace_access` | `trace-access` | `address`; optional: `direction`, `depth`, `format` |
+| `x_ref` | `xref` | `address`; optional: `type`, `format` |
+| `detect_patterns` | `detect-patterns` | optional: `type`, `format` |
+| `stack_analyze` | `stack-analyze` | `address`; optional: `maxInstructions` |
 | `define_symbol` | `symbol define` | `address`, `label`; optional: `comment` |
 | `remove_symbol` | `symbol remove` | `address` |
 | `lookup_symbol` | `symbol lookup` | `address` |
-| `list_symbols` | `symbol list` | optional: `includeHardware`, `filter` |
+| `list_symbols` | `symbol list` | optional: `includeHardware`, `filter`, `format` |
 | `set_symbols` | `symbol set` | optional: `hardware`, `osVariables`, `osRom`, `userLabels` |
 | `define_segment` | `segment define` | `name`, `type`, `start`, `end`; optional: `comment` |
-| `remove_segment` | `segment remove` | `name` |
-| `list_segments` | `segment list` | — |
-| `clear_segments` | `segment clear` | — |
+| `remove_segment` | `segment remove` | `name`; optional: `dryRun` |
+| `list_segments` | `segment list` | optional: `format` |
+| `clear_segments` | `segment clear` | optional: `dryRun` |
 | `generate_linker_config` | `segment linker-config` | `output` |
 | `annotate_zero_page` | `zero-page annotate` | `address`, `label`; optional: `comment` |
 | `show_zero_page_map` | `zero-page show` | optional: `showUnannotated` |
 | `load_labels` | `labels load` | `filePath` |
 | `save_labels` | `labels save` | optional: `filePath` |
-| `create_atr` | `atr create` | `output`, `sectors`, `density` |
+| `create_atr` | `atr create` | `output`, `sectors`, `density`; optional: `dryRun` |
 | `extract_atr_file` | `atr extract` | `filePath`, `name`, `output` |
-| `inject_atr_file` | `atr inject` | `filePath`, `name`, `input` |
-| `write_atr_sector` | `atr write-sector` | `filePath`, `sector`, `input` |
-| `write_atr_file` | `atr write-file` | `filePath`, `name`, `input`; optional: `startSector` |
+| `inject_atr_file` | `atr inject` | `filePath`, `name`, `input`; optional: `dryRun` |
+| `inject_all_atr_files` | `atr inject-all` | `filePath`, `sourceDir`; optional: `pattern`, `dryRun` |
+| `extract_all_atr_files` | `atr extract-all` | `filePath`; optional: `outputDir` |
+| `write_atr_sector` | `atr write-sector` | `filePath`, `sector`, `input`; optional: `dryRun` |
+| `write_atr_file` | `atr write-file` | `filePath`, `name`, `input`; optional: `startSector`, `dryRun` |
+| `atr_sector_map` | `atr sector-map` | `filePath`; optional: `format` |
+| `atr_file_frag` | `atr file-frag` | `filePath`, `name` |
+| `atr_recover` | `atr recover` | `filePath`, `name`, `output` |
+| `atr_vtoc` | `atr vtoc` | `filePath` |
+| `atr_batch` | `atr batch` | `filePath`, `script` |
 | `define_filesystem` | `atr filesystem` | `filePath`, `directoryOffset`, `entrySize`, `filenameLength`, `extensionLength`, `startSectorOffset`, `sectorCountOffset` |
 | `diff_roms` | `diff` | `file1`, `file2`; optional: `format` |
 | `hex_to_decimal` | `hex-to-decimal` | `hex` |
 | `decimal_to_hex` | `decimal-to-hex` | `value` |
+| `analyze_disassemble` | `analyze-disassemble` | `start`, `bytes`; optional: `format` |
+| `probe_and_segment` | `probe-and-segment` | `start`, `end` |
+| `analyze_full` | `analyze-full` | — |
+| `patterns_list` | `patterns list` | optional: `tag`, `category`, `query` |
+| `patterns_add` | `patterns add` | `name`, `hex`; optional: `description`, `tag`, `category` |
+| `patterns_remove` | `patterns remove` | `name` |
+| `patterns_show` | `patterns show` | `name` |
+| `patterns_search` | `patterns search` | `name`; optional: `maxResults` |
+| `patterns_import` | `patterns import` | `path` |
+| `patterns_export` | `patterns export` | optional: `tag`, `category` |
+| `struct_define` | `struct define` | `path` |
+| `struct_list` | `struct list` | optional: `tag`, `category` |
+| `struct_show` | `struct show` | `name` |
+| `struct_match` | `struct match` | `start`, `end`; optional: `template` |
+| `struct_remove` | `struct remove` | `name` |
+| `struct_import` | `struct import` | `path` |
+| `struct_export` | `struct export` | optional: `tag`, `category` |
 
 ### Example Scripts
 
@@ -1836,9 +2634,141 @@ atarihacker script analyze_all.txt
 
 ---
 
+### Control Flow Analysis Workflow
+
+Extract binary, detect control flow patterns, and analyze stack usage:
+
+```bash
+# 1. Load and analyze
+atarihacker analyze
+
+# 2. Detect state machines and jump tables
+atarihacker detect-patterns
+
+# 3. Focus on a specific subroutine
+atarihacker detect-patterns --type state-machine
+
+# 4. Analyze stack balance
+atarihacker stack-analyze $C000
+
+# 5. Trace with stack depth annotations
+atarihacker trace $C000 --stack
+```
+
+### Data Flow Tracing Workflow
+
+Trace how data moves through memory:
+
+```bash
+# 1. Find all references to a hardware register
+atarihacker xref $D400 --type write
+
+# 2. Trace data flow forward (from writes to reads)
+atarihacker trace-access $B000
+
+# 3. Trace data flow backward (from reads to writes)
+atarihacker trace-access $B000 --direction backward
+
+# 4. Use structured output for LLM analysis
+atarihacker trace-access $B000 --format csv
+```
+
+### Pattern Library & Structural Matching Workflow
+
+Build and use a pattern library for recurring signatures:
+
+```bash
+# 1. Add common patterns
+atarihacker patterns add jsr_rts_stub "20 ?? ?? 60" \
+    --description "Common 6502 stub" --tag stub
+atarihacker patterns add antic_dlist "42 ?? ?? 4F ?? ?? 41 ?? ?? 02 01" \
+    --description "ANTIC display list with LMS" --tag antic
+
+# 2. Search binary using saved patterns
+atarihacker patterns search jsr_rts_stub
+
+# 3. Define a structural template for level headers
+cat > level_header.json << 'EOF'
+{
+  "name": "atari_level_header",
+  "fields": [
+    { "name": "width", "offset": 0, "type": "byte" },
+    { "name": "height", "offset": 1, "type": "byte" },
+    { "name": "tile_map_ptr", "offset": 2, "type": "word_le" },
+    { "name": "palette", "offset": 11, "type": "bytes", "length": 4 }
+  ],
+  "validation": [
+    { "field": "width", "min": 1, "max": 40 },
+    { "field": "height", "min": 1, "max": 24 }
+  ]
+}
+EOF
+atarihacker struct define level_header.json
+
+# 4. Match structural templates against memory
+atarihacker struct match $0C00 $1CFF --template atari_level_header
+
+# 5. Probe with structural matching
+atarihacker probe $0C00 $1CFF --struct
+
+# 6. Export patterns for sharing
+atarihacker patterns export --tag antic > antic_patterns.json
+```
+
+### Compound Command Workflow
+
+Use compound commands for faster single-step operations:
+
+```bash
+# Analyze and disassemble in one step
+atarihacker analyze-disassemble $0C00 5376 --format ca65
+
+# Probe and create a segment
+atarihacker probe-and-segment $1D00 $2FFF
+
+# Full analysis pipeline
+atarihacker analyze-full
+```
+
+### ATR Forensics Workflow
+
+Inspect and recover data from disk images:
+
+```bash
+# 1. Get sector usage overview
+atarihacker atr sector-map GAME.ATR --format ascii
+
+# 2. Check file fragmentation
+atarihacker atr file-frag GAME.ATR AGENT.OBJ
+
+# 3. Examine VTOC
+atarihacker atr vtoc GAME.ATR
+
+# 4. Recover deleted files
+atarihacker atr recover GAME.ATR DELETED.OBJ recovered/
+
+# 5. Bulk extract all files
+atarihacker atr extract-all GAME.ATR --output-dir extracted/
+
+# 6. Preview changes before writing
+atarihacker atr inject-all GAME.ATR build/ --pattern "*.OBJ" --dry-run
+
+# 7. Execute batch operations
+cat > atr_ops.txt << 'EOF'
+extract AGENT.OBJ extracted/
+inject build/AGENT.OBJ AGENT.OBJ
+sector-map --format ascii
+EOF
+atarihacker atr batch GAME.ATR atr_ops.txt
+```
+
+---
+
 ## Notes
 
 - The `disassemble` command **without** `--analyze` behaves exactly as in v3 — full backward compatibility
 - Self-modifying code and jump table dispatch (`JMP (table,X)`) cannot be resolved statically; use `segment define` to mark those regions manually
 - All write operations on ATR files use **copy-on-write** semantics — the original file is never modified
 - Sidecar files are compatible between v3 and v4 formats; v3 files are read transparently and upgraded on save
+- Verbose mode (`--verbose` / `-v`) emits `# `-prefixed metadata lines, making it shell-compatible and LLM-friendly
+- Structured output (`--format csv|tsv|kv`) is available on `analyze`, `callgraph`, `coverage`, `probe`, `xref`, `trace`, `trace-access`, `detect-patterns`, `symbol list`, `segment list`, and other commands
