@@ -208,4 +208,70 @@ public sealed class AtrParserTests
 
         Assert.Throws<InvalidDataException>(() => AtrParser.GetSectorChain(atr, geometry, 5));
     }
+
+    // ─── TryParseBootHeader tests ───────────────────────────────────────
+
+    [Fact]
+    public void TryParseBootHeader_ReturnsNullForEmptyData()
+    {
+        Assert.Null(AtrParser.TryParseBootHeader(ReadOnlySpan<byte>.Empty));
+    }
+
+    [Fact]
+    public void TryParseBootHeader_ReturnsNullForShortData()
+    {
+        Assert.Null(AtrParser.TryParseBootHeader(new byte[] { 0xD0, 0x03, 0x00, 0x07 }));
+    }
+
+    [Fact]
+    public void TryParseBootHeader_ReturnsNullForInvalidFlag()
+    {
+        Assert.Null(AtrParser.TryParseBootHeader(new byte[] { 0xFF, 0x03, 0x00, 0x07, 0x40, 0x15 }));
+    }
+
+    [Fact]
+    public void TryParseBootHeader_ParsesStandardBootHeader()
+    {
+        var data = new byte[] { 0xD0, 0x03, 0x00, 0x07, 0x40, 0x15 };
+        var result = AtrParser.TryParseBootHeader(data);
+
+        Assert.NotNull(result);
+        Assert.Equal(0xD0, result!.Flag);
+        Assert.Equal(3, result.SectorCount);
+        Assert.Equal(0x0700, result.LoadAddress);
+        Assert.Equal(0x1540, result.InitAddress);
+    }
+
+    [Fact]
+    public void TryParseBootHeader_ParsesContinueFlag()
+    {
+        var data = new byte[] { 0x00, 0x03, 0x00, 0x07, 0x00, 0x07 };
+        var result = AtrParser.TryParseBootHeader(data);
+
+        Assert.NotNull(result);
+        Assert.Equal(0x00, result!.Flag);
+        Assert.Equal("Continue loading", result.Description);
+    }
+
+    [Fact]
+    public void TryParseBootHeader_ParsesStopRunFlag()
+    {
+        var data = new byte[] { 0xD0, 0x03, 0x00, 0x07, 0x40, 0x15 };
+        var result = AtrParser.TryParseBootHeader(data);
+
+        Assert.NotNull(result);
+        Assert.Equal(0xD0, result!.Flag);
+        Assert.Equal("Stop/run", result.Description);
+    }
+
+    [Fact]
+    public void TryParseBootHeader_ParsesLoadAndInitAddresses()
+    {
+        var data = new byte[] { 0xD0, 0x01, 0x00, 0x20, 0x00, 0x30 };
+        var result = AtrParser.TryParseBootHeader(data);
+
+        Assert.NotNull(result);
+        Assert.Equal(0x2000, result!.LoadAddress);
+        Assert.Equal(0x3000, result.InitAddress);
+    }
 }

@@ -67,10 +67,16 @@ public static class DisassemblerTool
                 var (codeRegions, dataRegions) = DisassemblyAnalyzer.TraceCodeRegions(session.Data, references, session.Segments, session.BaseAddress);
                 var labelMap = DisassemblyAnalyzer.GenerateLabels(references, symbols, zeroPageMap, codeRegions);
 
+                // Re-disassemble with data region awareness to prevent multi-byte
+                // data region instructions (e.g. boot header byte $15 = ORA zp,X)
+                // from consuming adjacent code bytes.
+                var dataAwareInstructions = DisassembleRange(
+                    session, fileOffset, end, addressOverride, symbols, zeroPageMap, dataRegions);
+
                 return format.ToLowerInvariant() switch
                 {
-                    "ca65" => FormatCa65Analyzed(session, instructions, baseAddr, symbols, zeroPageMap, references, codeRegions, labelMap),
-                    _ => FormatAnalyzed(instructions, labelMap, hasMapping),
+                    "ca65" => FormatCa65Analyzed(session, dataAwareInstructions, baseAddr, symbols, zeroPageMap, references, codeRegions, labelMap),
+                    _ => FormatAnalyzed(dataAwareInstructions, labelMap, hasMapping),
                 };
             }
 
@@ -92,6 +98,10 @@ public static class DisassemblerTool
 
     /// <summary>
     /// Disassembles a range of bytes into a structured list of instructions.
+    /// When <paramref name="dataRegions"/> is provided, addresses in data regions
+    /// are advanced byte-by-byte instead of instruction-by-instruction, preventing
+    /// multi-byte data-region instructions (e.g. boot header byte $15 = ORA zp,X)
+    /// from consuming adjacent code bytes.
     /// </summary>
     private static List<DisassembledLine> DisassembleRange(
         RomSession session,
@@ -99,13 +109,41 @@ public static class DisassemblerTool
         int end,
         ushort? addressOverride,
         SymbolTable symbols,
-        ZeroPageMap zeroPageMap)
+        ZeroPageMap zeroPageMap,
+        HashSet<ushort>? dataRegions = null)
     {
         var instructions = new List<DisassembledLine>();
         var position = fileOffset;
 
         while (position < end)
         {
+            // When dataRegions are provided, use session-based address resolution
+            // (consistent with DisassemblyAnalyzer) to ensure addresses match the
+            // analysis results. Otherwise fall back to the original logic.
+            var currentAddress = dataRegions is not null
+                ? ResolveAddressForDataCheck(session, position)
+                : addressOverride is null
+                    ? XexAddressResolver.ResolveFileOffset(session, position)
+                    : (ushort)(addressOverride.Value + (position - fileOffset));
+
+            // When dataRegions are known and the current address is in a data region,
+            // advance byte-by-byte to avoid multi-byte instructions consuming code bytes.
+            if (dataRegions is not null && currentAddress is not null && dataRegions.Contains(currentAddress.Value))
+            {
+                var dataByte = session.Data![position];
+                instructions.Add(new DisassembledLine(
+                    currentAddress,
+                    [dataByte],
+                    ".db",
+                    Formatting.HexByte(dataByte),
+                    OperandAddress: null,
+                    string.Empty,
+                    IsData: true
+                ));
+                position++;
+                continue;
+            }
+
             var opcode = session.Data![position];
             if (!Opcodes6502.Table.TryGetValue(opcode, out var entry) || !entry.IsOfficial || position + entry.Bytes > session.Length)
             {
@@ -125,9 +163,6 @@ public static class DisassemblerTool
                 continue;
             }
 
-            var currentAddress = addressOverride is null
-                ? XexAddressResolver.ResolveFileOffset(session, position)
-                : (ushort)(addressOverride.Value + (position - fileOffset));
             var bytes = session.Data.Skip(position).Take(entry.Bytes).ToArray();
             var operand = FormatOperand(entry, session.Data, position, currentAddress ?? 0, symbols, zeroPageMap);
             var operandAddress = ResolveOperandAddress(entry, session.Data, position, currentAddress ?? 0);
@@ -223,7 +258,56 @@ public static class DisassemblerTool
         // Keep track of which addresses we've emitted labels for
         var emittedLabels = new HashSet<ushort>();
 
-        var i = 0;
+        // ─── Boot header structured emission ─────────────────────────────
+        // If the reference graph detected a boot header at the start of the
+        // binary and the first 6 instructions match the boot header addresses,
+        // emit them as a single structured block rather than individual .byte lines.
+        var bootHeaderConsumed = 0;
+        if (references.BootHeader is not null)
+        {
+            var bh = references.BootHeader;
+            var bhStartAddr = instructions.Count > 0 ? instructions[0].Address : null;
+
+            if (bhStartAddr is not null)
+            {
+                // Verify the first 6 instructions are data at consecutive addresses
+                var isBootHeader = instructions.Count >= 6;
+                for (var check = 0; check < 6 && isBootHeader; check++)
+                {
+                    var chk = instructions[check];
+                    var expectedAddr = (ushort)(bhStartAddr.Value + check);
+                    if (chk.Address != expectedAddr || !chk.IsData)
+                        isBootHeader = false;
+                }
+
+                if (isBootHeader)
+                {
+                    var flagDesc = bh.Description is not null
+                        ? $"; Boot flag: {Formatting.HexByte(bh.Flag)} = {bh.Description}"
+                        : $"; Boot flag: {Formatting.HexByte(bh.Flag)}";
+                    var sectorsComment = $"; Sectors to load: {bh.SectorCount}";
+                    var loadComment = $"; Load address: {Formatting.HexWord(bh.LoadAddress)}";
+                    var initComment = $"; Init address: {Formatting.HexWord(bh.InitAddress)}";
+
+                    lines.Add("; Boot header");
+                    lines.Add($"\t.byte\t{Formatting.HexByte(bh.Flag)}\t{flagDesc}");
+                    lines.Add($"\t.byte\t{Formatting.HexByte(bh.SectorCount)}\t{sectorsComment}");
+                    lines.Add($"\t.word\t{Formatting.HexWord(bh.LoadAddress)}\t{loadComment}");
+                    lines.Add($"\t.word\t{Formatting.HexWord(bh.InitAddress)}\t{initComment}");
+
+                    // Mark these addresses as emitted labels so they don't appear again
+                    for (var e = 0; e < 6; e++)
+                    {
+                        var bhAddr = (ushort)(bhStartAddr.Value + e);
+                        emittedLabels.Add(bhAddr);
+                    }
+
+                    bootHeaderConsumed = 6;
+                }
+            }
+        }
+
+        var i = bootHeaderConsumed;
         while (i < instructions.Count)
         {
             var instr = instructions[i];
@@ -926,5 +1010,23 @@ public static class DisassemblerTool
         // SegmentManager singleton that's available in the DI container.
         // Since we're in a static context, we return null and let the caller handle it.
         return null;
+    }
+
+    /// <summary>
+    /// Resolves the memory address for a file offset using session data,
+    /// matching the logic used by <see cref="DisassemblyAnalyzer"/> for
+    /// consistent data region checking.
+    /// </summary>
+    private static ushort? ResolveAddressForDataCheck(RomSession session, int fileOffset)
+    {
+        if (session.Segments is { Count: > 0 })
+        {
+            return XexParser.FileOffsetToMemoryAddress(session.Segments, fileOffset);
+        }
+        if (session.BaseAddress is not null)
+        {
+            return (ushort)(session.BaseAddress.Value + fileOffset);
+        }
+        return fileOffset <= 0xFFFF ? (ushort)fileOffset : null;
     }
 }

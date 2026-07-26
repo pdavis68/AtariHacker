@@ -87,5 +87,62 @@ public sealed class DisassemblyAnalyzerTests
         Assert.Empty(empty.CodeEntryPoints);
         Assert.Empty(empty.DataAddresses);
         Assert.Empty(empty.InstructionAddresses);
+        Assert.Null(empty.BootHeader);
+    }
+
+    // ─── Boot header detection tests ────────────────────────────────────
+
+    [Fact]
+    public void Analyze_DetectsBootHeaderWithD0Flag()
+    {
+        var data = new byte[] { 0xD0, 0x03, 0x00, 0x07, 0x40, 0x15, 0x60 };
+        var result = DisassemblyAnalyzer.Analyze(data, null, (ushort)0x0700);
+
+        Assert.NotNull(result.BootHeader);
+        Assert.Equal(0xD0, result.BootHeader!.Flag);
+        Assert.Equal(3, result.BootHeader.SectorCount);
+        Assert.Equal(0x0700, result.BootHeader.LoadAddress);
+        Assert.Equal(0x1540, result.BootHeader.InitAddress);
+    }
+
+    [Fact]
+    public void Analyze_DetectsBootHeaderWith00Flag()
+    {
+        var data = new byte[] { 0x00, 0x03, 0x00, 0x07, 0x00, 0x07, 0x60 };
+        var result = DisassemblyAnalyzer.Analyze(data, null, (ushort)0x0700);
+
+        Assert.NotNull(result.BootHeader);
+        Assert.Equal(0x00, result.BootHeader!.Flag);
+    }
+
+    [Fact]
+    public void Analyze_DoesNotDetectBootHeaderForInvalidFlag()
+    {
+        var data = new byte[] { 0xFF, 0x03, 0x00, 0x07, 0x40, 0x15, 0x60 };
+        var result = DisassemblyAnalyzer.Analyze(data, null, (ushort)0x0700);
+
+        Assert.Null(result.BootHeader);
+    }
+
+    [Fact]
+    public void Analyze_DoesNotDetectBootHeaderForShortData()
+    {
+        var data = new byte[] { 0xD0, 0x03, 0x00 };
+        var result = DisassemblyAnalyzer.Analyze(data, null, (ushort)0x0700);
+
+        Assert.Null(result.BootHeader);
+    }
+
+    [Fact]
+    public void Analyze_BootHeaderMarksBytesAsDataReferences()
+    {
+        var data = new byte[] { 0xD0, 0x03, 0x00, 0x07, 0x40, 0x15, 0x60 };
+        var result = DisassemblyAnalyzer.Analyze(data, null, (ushort)0x0700);
+
+        // All 6 boot header bytes should be data references
+        for (ushort addr = 0x0700; addr < 0x0706; addr++)
+        {
+            Assert.Contains(addr, result.AbsoluteDataReferences);
+        }
     }
 }

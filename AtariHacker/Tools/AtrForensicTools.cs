@@ -70,7 +70,16 @@ public static class AtrForensicTools
     {
         var info = new List<SectorInfo>();
         var hasDos = AtrParser.HasDosFilesystem(data);
+        var hasSparta = !hasDos && AtrParser.HasSpartaDosFilesystem(data);
         var directory = hasDos ? AtrParser.ReadDirectory(data) : null;
+        List<SpartaDirEntry>? spartaDirectory = null;
+        HashSet<int>? spartaDirSectors = null;
+
+        if (hasSparta)
+        {
+            spartaDirectory = AtrParser.ReadSpartaDirectory(data);
+            spartaDirSectors = new HashSet<int>(AtrParser.GetSpartaDirectorySectors(data, geometry));
+        }
 
         for (var sector = 1; sector <= geometry.SectorCount; sector++)
         {
@@ -90,13 +99,54 @@ public static class AtrForensicTools
             {
                 type = SectorType.Directory;
             }
+            else if (sector == 4 && hasSparta)
+            {
+                type = SectorType.VTOC;
+            }
+            else if (spartaDirSectors is not null && spartaDirSectors.Contains(sector))
+            {
+                type = SectorType.Directory;
+            }
             else if (directory is not null)
             {
-                // Check if this sector belongs to any file
+                // Check if this sector belongs to any DOS 2.x file
                 var found = false;
                 for (var fi = 0; fi < directory.Count; fi++)
                 {
                     var entry = directory[fi];
+                    if (entry.IsDeleted) continue;
+
+                    try
+                    {
+                        var chain = AtrParser.GetSectorChain(data, geometry, entry.StartSector);
+                        var idx = chain.IndexOf(sector);
+                        if (idx >= 0)
+                        {
+                            type = SectorType.FileData;
+                            fileIndex = fi;
+                            nextSector = idx + 1 < chain.Count ? chain[idx + 1] : null;
+                            found = true;
+                            break;
+                        }
+                    }
+                    catch
+                    {
+                        // Skip files with corrupted chains
+                    }
+                }
+
+                if (!found)
+                {
+                    type = SectorType.Free;
+                }
+            }
+            else if (spartaDirectory is not null)
+            {
+                // Check if this sector belongs to any SpartaDOS file
+                var found = false;
+                for (var fi = 0; fi < spartaDirectory.Count; fi++)
+                {
+                    var entry = spartaDirectory[fi];
                     if (entry.IsDeleted) continue;
 
                     try
@@ -254,66 +304,97 @@ public static class AtrForensicTools
             if (!AtrParser.IsAtr(data))
                 return "ERROR: Not a valid ATR image.";
 
-            if (!AtrParser.HasDosFilesystem(data))
-                return "ERROR: No DOS 2.x filesystem detected.";
-
             var geometry = AtrParser.ParseGeometry(data);
-            var directory = AtrParser.ReadDirectory(data);
-            var match = MatchEntry(directory, name);
-            if (match is null)
-                return $"ERROR: File \"{name}\" not found in ATR directory.";
 
-            var chain = AtrParser.GetSectorChain(data, geometry, match.StartSector);
-            var fileData = AtrParser.ExtractFile(data, geometry, match);
-
-            // Detect fragments: gaps where next sector != current + 1
-            var gaps = new List<(int From, int To)>();
-            for (var i = 0; i < chain.Count - 1; i++)
+            // Try DOS 2.x first
+            if (AtrParser.HasDosFilesystem(data))
             {
-                if (chain[i + 1] != chain[i] + 1)
-                {
-                    gaps.Add((chain[i], chain[i + 1]));
-                }
+                return AnalyzeFragmentationDos(data, geometry, name);
             }
 
-            var fragmentCount = gaps.Count + 1;
-            var fragRatio = chain.Count > 0 ? (double)gaps.Count / chain.Count * 100 : 0;
-
-            var lines = new List<string>
+            // Try SpartaDOS
+            if (AtrParser.HasSpartaDosFilesystem(data))
             {
-                $"Fragmentation analysis for {match.FileName}.{match.Extension}:",
-                $"  File size: {fileData.Length:N0} bytes",
-                $"  Total sectors: {chain.Count}",
-                $"  Fragments: {fragmentCount}",
-                $"  Fragmentation ratio: {fragRatio:F1}% {(fragRatio < 10 ? "(low)" : fragRatio < 30 ? "(moderate)" : "(high)")}",
-                string.Empty,
-                "  Sector chain:"
-            };
-
-            // Show sector chain in groups of 10
-            for (var i = 0; i < chain.Count; i += 10)
-            {
-                var batch = chain.Skip(i).Take(10);
-                lines.Add("    " + string.Join(" → ", batch.Select(s => $"{s:D3}")));
+                return AnalyzeFragmentationSparta(data, geometry, name);
             }
 
-            if (gaps.Count > 0)
-            {
-                lines.Add(string.Empty);
-                lines.Add("  Gaps:");
-                foreach (var gap in gaps)
-                {
-                    var gapSize = gap.To - gap.From;
-                    lines.Add($"    {gap.From:D3} → {gap.To:D3} (gap of {gapSize} sectors)");
-                }
-            }
-
-            return string.Join('\n', lines);
+            return "ERROR: No DOS 2.x or SpartaDOS filesystem detected.";
         }
         catch (Exception ex)
         {
             return $"ERROR: {ex.Message}";
         }
+    }
+
+    private static string AnalyzeFragmentationDos(byte[] data, AtrGeometry geometry, string name)
+    {
+        var directory = AtrParser.ReadDirectory(data);
+        var match = MatchEntry(directory, name);
+        if (match is null)
+            return $"ERROR: File \"{name}\" not found in ATR directory.";
+
+        var chain = AtrParser.GetSectorChain(data, geometry, match.StartSector);
+        var fileData = AtrParser.ExtractFile(data, geometry, match);
+        return FormatFragmentationResult(match.FileName + "." + match.Extension, fileData.Length, chain);
+    }
+
+    private static string AnalyzeFragmentationSparta(byte[] data, AtrGeometry geometry, string name)
+    {
+        var directory = AtrParser.ReadSpartaDirectory(data);
+        var match = MatchSpartaEntry(directory, name);
+        if (match is null)
+            return $"ERROR: File \"{name}\" not found in SpartaDOS directory.";
+
+        var chain = AtrParser.GetSectorChain(data, geometry, match.StartSector);
+        var fileData = ExtractSpartaFile(data, geometry, match);
+        return FormatFragmentationResult(match.FileName, fileData.Length, chain);
+    }
+
+    private static string FormatFragmentationResult(string fileName, int fileSize, List<int> chain)
+    {
+        // Detect fragments: gaps where next sector != current + 1
+        var gaps = new List<(int From, int To)>();
+        for (var i = 0; i < chain.Count - 1; i++)
+        {
+            if (chain[i + 1] != chain[i] + 1)
+            {
+                gaps.Add((chain[i], chain[i + 1]));
+            }
+        }
+
+        var fragmentCount = gaps.Count + 1;
+        var fragRatio = chain.Count > 0 ? (double)gaps.Count / chain.Count * 100 : 0;
+
+        var lines = new List<string>
+        {
+            $"Fragmentation analysis for {fileName}:",
+            $"  File size: {fileSize:N0} bytes",
+            $"  Total sectors: {chain.Count}",
+            $"  Fragments: {fragmentCount}",
+            $"  Fragmentation ratio: {fragRatio:F1}% {(fragRatio < 10 ? "(low)" : fragRatio < 30 ? "(moderate)" : "(high)")}",
+            string.Empty,
+            "  Sector chain:"
+        };
+
+        // Show sector chain in groups of 10
+        for (var i = 0; i < chain.Count; i += 10)
+        {
+            var batch = chain.Skip(i).Take(10);
+            lines.Add("    " + string.Join(" → ", batch.Select(s => $"{s:D3}")));
+        }
+
+        if (gaps.Count > 0)
+        {
+            lines.Add(string.Empty);
+            lines.Add("  Gaps:");
+            foreach (var gap in gaps)
+            {
+                var gapSize = gap.To - gap.From;
+                lines.Add($"    {gap.From:D3} → {gap.To:D3} (gap of {gapSize} sectors)");
+            }
+        }
+
+        return string.Join('\n', lines);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -329,65 +410,116 @@ public static class AtrForensicTools
             if (!AtrParser.IsAtr(data))
                 return "ERROR: Not a valid ATR image.";
 
-            if (!AtrParser.HasDosFilesystem(data))
-                return "ERROR: No DOS 2.x filesystem detected.";
-
             var geometry = AtrParser.ParseGeometry(data);
-            var deletedEntry = AtrParser.FindDeletedEntry(data, name);
-            if (deletedEntry is null)
-                return $"ERROR: No deleted file named \"{name}\" found in ATR directory.";
 
-            // Find the directory sector and offset for reporting
-            var allEntries = AtrParser.ReadDirectory(data);
-            var entryIndex = -1;
-            for (var i = 0; i < allEntries.Count; i++)
+            // Try DOS 2.x first
+            if (AtrParser.HasDosFilesystem(data))
             {
-                if (ReferenceEquals(allEntries[i], deletedEntry))
-                {
-                    entryIndex = i;
-                    break;
-                }
-            }
-            var dirSector = 361 + (entryIndex / 8);
-            var dirOffset = (entryIndex % 8) * 16;
-
-            // Recover the data by following the sector chain
-            byte[] recovered;
-            try
-            {
-                recovered = AtrParser.ExtractFile(data, geometry, deletedEntry);
-            }
-            catch (Exception ex)
-            {
-                return $"ERROR: Recovery failed: {ex.Message}";
+                return RecoverDeletedDos(data, geometry, resolvedPath, name, output);
             }
 
-            // Write recovered data
-            var parent = Path.GetDirectoryName(output);
-            if (!string.IsNullOrWhiteSpace(parent))
-                Directory.CreateDirectory(parent);
+            // Try SpartaDOS
+            if (AtrParser.HasSpartaDosFilesystem(data))
+            {
+                return RecoverDeletedSparta(data, geometry, resolvedPath, name, output);
+            }
 
-            File.WriteAllBytes(output, recovered);
-
-            var fullName = string.IsNullOrWhiteSpace(deletedEntry.Extension)
-                ? deletedEntry.FileName
-                : $"{deletedEntry.FileName}.{deletedEntry.Extension}";
-
-            return string.Join('\n',
-                $"Recovering deleted file '{fullName}'...",
-                $"  Directory entry found at sector {dirSector}, offset {dirOffset}",
-                $"  Status: Deleted (flag = $80)",
-                $"  Original size: {deletedEntry.SectorCount * (geometry.SectorSize - 3):N0} bytes (allocated)",
-                $"  Recovered size: {recovered.Length:N0} bytes",
-                $"  Start sector: {deletedEntry.StartSector}",
-                $"  Recovering sector chain starting at {deletedEntry.StartSector}...",
-                $"  Recovery complete: {recovered.Length:N0} bytes written to {output}"
-            );
+            return "ERROR: No DOS 2.x or SpartaDOS filesystem detected.";
         }
         catch (Exception ex)
         {
             return $"ERROR: {ex.Message}";
         }
+    }
+
+    private static string RecoverDeletedDos(byte[] data, AtrGeometry geometry, string resolvedPath, string name, string output)
+    {
+        var deletedEntry = AtrParser.FindDeletedEntry(data, name);
+        if (deletedEntry is null)
+            return $"ERROR: No deleted file named \"{name}\" found in ATR directory.";
+
+        // Find the directory sector and offset for reporting
+        var allEntries = AtrParser.ReadDirectory(data);
+        var entryIndex = -1;
+        for (var i = 0; i < allEntries.Count; i++)
+        {
+            if (ReferenceEquals(allEntries[i], deletedEntry))
+            {
+                entryIndex = i;
+                break;
+            }
+        }
+        var dirSector = 361 + (entryIndex / 8);
+        var dirOffset = (entryIndex % 8) * 16;
+
+        // Recover the data by following the sector chain
+        byte[] recovered;
+        try
+        {
+            recovered = AtrParser.ExtractFile(data, geometry, deletedEntry);
+        }
+        catch (Exception ex)
+        {
+            return $"ERROR: Recovery failed: {ex.Message}";
+        }
+
+        // Write recovered data
+        var parent = Path.GetDirectoryName(output);
+        if (!string.IsNullOrWhiteSpace(parent))
+            Directory.CreateDirectory(parent);
+
+        File.WriteAllBytes(output, recovered);
+
+        var fullName = string.IsNullOrWhiteSpace(deletedEntry.Extension)
+            ? deletedEntry.FileName
+            : $"{deletedEntry.FileName}.{deletedEntry.Extension}";
+
+        return string.Join('\n',
+            $"Recovering deleted file '{fullName}'...",
+            $"  Directory entry found at sector {dirSector}, offset {dirOffset}",
+            $"  Status: Deleted (flag = $80)",
+            $"  Original size: {deletedEntry.SectorCount * (geometry.SectorSize - 3):N0} bytes (allocated)",
+            $"  Recovered size: {recovered.Length:N0} bytes",
+            $"  Start sector: {deletedEntry.StartSector}",
+            $"  Recovering sector chain starting at {deletedEntry.StartSector}...",
+            $"  Recovery complete: {recovered.Length:N0} bytes written to {output}"
+        );
+    }
+
+    private static string RecoverDeletedSparta(byte[] data, AtrGeometry geometry, string resolvedPath, string name, string output)
+    {
+        var spartaDir = AtrParser.ReadSpartaDirectory(data);
+        var deletedEntry = spartaDir.FirstOrDefault(e => e.IsDeleted &&
+            string.Equals(e.FileName.Trim().ToUpperInvariant(), name.Trim().ToUpperInvariant(), StringComparison.OrdinalIgnoreCase));
+
+        if (deletedEntry is null)
+            return $"ERROR: No deleted file named \"{name}\" found in SpartaDOS directory.";
+
+        // Recover the data by following the sector chain
+        byte[] recovered;
+        try
+        {
+            recovered = ExtractSpartaFile(data, geometry, deletedEntry);
+        }
+        catch (Exception ex)
+        {
+            return $"ERROR: Recovery failed: {ex.Message}";
+        }
+
+        // Write recovered data
+        var parent = Path.GetDirectoryName(output);
+        if (!string.IsNullOrWhiteSpace(parent))
+            Directory.CreateDirectory(parent);
+
+        File.WriteAllBytes(output, recovered);
+
+        return string.Join('\n',
+            $"Recovering deleted file '{deletedEntry.FileName}' (SpartaDOS)...",
+            $"  Status: Deleted (flag = ${deletedEntry.Flags:X2})",
+            $"  Recovered size: {recovered.Length:N0} bytes",
+            $"  Start sector: {deletedEntry.StartSector}",
+            $"  Recovery complete: {recovered.Length:N0} bytes written to {output}"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -403,85 +535,178 @@ public static class AtrForensicTools
             if (!AtrParser.IsAtr(data))
                 return "ERROR: Not a valid ATR image.";
 
-            if (!AtrParser.HasDosFilesystem(data))
-                return "ERROR: No DOS 2.x filesystem detected.";
-
             var geometry = AtrParser.ParseGeometry(data);
-            var vtoc = AtrParser.ReadSector(data, geometry, 360);
-            var bitmap = AtrParser.GetSectorBitmap(data, geometry);
 
-            var freeCount = bitmap.Count(b => b);
-            var usedCount = bitmap.Length - freeCount;
-
-            var lines = new List<string>
+            if (AtrParser.HasDosFilesystem(data))
             {
-                $"VTOC analysis for {Path.GetFileName(resolvedPath)}:",
-                $"  Sector: 360",
-                $"  Total sectors: {geometry.SectorCount}",
-                $"  Free sectors: {freeCount}",
-                $"  Used sectors: {usedCount}",
-                string.Empty,
-                "  Bitmap (first 32 bytes):"
-            };
-
-            // Display first 32 bytes of the bitmap in hex
-            var bitmapStart = 10; // VTOC bitmap starts at byte 10
-            for (var row = 0; row < 4 && (bitmapStart + row * 16) < vtoc.Length; row++)
-            {
-                var hexParts = new List<string>();
-                for (var col = 0; col < 16; col++)
-                {
-                    var idx = bitmapStart + row * 16 + col;
-                    if (idx < vtoc.Length)
-                    {
-                        hexParts.Add($"{vtoc[idx]:X2}");
-                    }
-                    else
-                    {
-                        hexParts.Add("  ");
-                    }
-                }
-                lines.Add($"    {string.Join(" ", hexParts.Take(8))}  {string.Join(" ", hexParts.Skip(8))}");
+                return ShowVtocDos(data, geometry, resolvedPath);
             }
 
-            // Find free sector ranges
-            var freeRanges = new List<(int Start, int End)>();
-            var i = 0;
-            while (i < bitmap.Length)
+            if (AtrParser.HasSpartaDosFilesystem(data))
             {
-                if (bitmap[i])
-                {
-                    var fs = i + 1;
-                    while (i < bitmap.Length && bitmap[i]) i++;
-                    freeRanges.Add((fs, i));
-                }
-                else
-                {
-                    i++;
-                }
+                return ShowVtocSparta(data, geometry, resolvedPath);
             }
 
-            lines.Add(string.Empty);
-            lines.Add("  Free sector ranges:");
-            if (freeRanges.Count == 0)
-            {
-                lines.Add("    (none)");
-            }
-            else
-            {
-                foreach (var range in freeRanges)
-                {
-                    var count = range.End - range.Start + 1;
-                    lines.Add($"    {range.Start:D3}-{range.End:D3} ({count} sectors)");
-                }
-            }
-
-            return string.Join('\n', lines);
+            return "ERROR: No DOS 2.x or SpartaDOS filesystem detected.";
         }
         catch (Exception ex)
         {
             return $"ERROR: {ex.Message}";
         }
+    }
+
+    private static string ShowVtocDos(byte[] data, AtrGeometry geometry, string resolvedPath)
+    {
+        var vtoc = AtrParser.ReadSector(data, geometry, 360);
+        var bitmap = AtrParser.GetSectorBitmap(data, geometry);
+
+        var freeCount = bitmap.Count(b => b);
+        var usedCount = bitmap.Length - freeCount;
+
+        var lines = new List<string>
+        {
+            $"VTOC analysis for {Path.GetFileName(resolvedPath)}:",
+            $"  Filesystem: DOS 2.x",
+            $"  Sector: 360",
+            $"  Total sectors: {geometry.SectorCount}",
+            $"  Free sectors: {freeCount}",
+            $"  Used sectors: {usedCount}",
+            string.Empty,
+            "  Bitmap (first 32 bytes):"
+        };
+
+        // Display first 32 bytes of the bitmap in hex
+        const int bitmapStart = 10; // VTOC bitmap starts at byte 10
+        for (var row = 0; row < 4 && (bitmapStart + row * 16) < vtoc.Length; row++)
+        {
+            var hexParts = new List<string>();
+            for (var col = 0; col < 16; col++)
+            {
+                var idx = bitmapStart + row * 16 + col;
+                if (idx < vtoc.Length)
+                {
+                    hexParts.Add($"{vtoc[idx]:X2}");
+                }
+                else
+                {
+                    hexParts.Add("  ");
+                }
+            }
+            lines.Add($"    {string.Join(" ", hexParts.Take(8))}  {string.Join(" ", hexParts.Skip(8))}");
+        }
+
+        // Find free sector ranges
+        var freeRanges = new List<(int Start, int End)>();
+        var i = 0;
+        while (i < bitmap.Length)
+        {
+            if (bitmap[i])
+            {
+                var fs = i + 1;
+                while (i < bitmap.Length && bitmap[i]) i++;
+                freeRanges.Add((fs, i));
+            }
+            else
+            {
+                i++;
+            }
+        }
+
+        lines.Add(string.Empty);
+        lines.Add("  Free sector ranges:");
+        if (freeRanges.Count == 0)
+        {
+            lines.Add("    (none)");
+        }
+        else
+        {
+            foreach (var range in freeRanges)
+            {
+                var count = range.End - range.Start + 1;
+                lines.Add($"    {range.Start:D3}-{range.End:D3} ({count} sectors)");
+            }
+        }
+
+        return string.Join('\n', lines);
+    }
+
+    private static string ShowVtocSparta(byte[] data, AtrGeometry geometry, string resolvedPath)
+    {
+        var vtoc = AtrParser.ReadSector(data, geometry, 4);
+        var bitmap = AtrParser.GetSpartaBitmap(data, geometry);
+
+        var freeCount = bitmap.Count(b => b);
+        var usedCount = bitmap.Length - freeCount;
+
+        var firstDirSector = ((vtoc[5] & 0x03) << 8) | vtoc[4];
+        var totalFree = vtoc[0] | (vtoc[1] << 8);
+
+        var lines = new List<string>
+        {
+            $"VTOC analysis for {Path.GetFileName(resolvedPath)}:",
+            $"  Filesystem: SpartaDOS",
+            $"  Sector: 4",
+            $"  Total sectors: {geometry.SectorCount}",
+            $"  Free sectors: {freeCount} (stored: {totalFree})",
+            $"  Used sectors: {usedCount}",
+            $"  First directory sector: {firstDirSector}",
+            string.Empty,
+            "  Bitmap (first 32 bytes):"
+        };
+
+        // SpartaDOS bitmap starts at byte 6
+        const int bitmapStart = 6;
+        for (var row = 0; row < 4 && (bitmapStart + row * 16) < vtoc.Length; row++)
+        {
+            var hexParts = new List<string>();
+            for (var col = 0; col < 16; col++)
+            {
+                var idx = bitmapStart + row * 16 + col;
+                if (idx < vtoc.Length)
+                {
+                    hexParts.Add($"{vtoc[idx]:X2}");
+                }
+                else
+                {
+                    hexParts.Add("  ");
+                }
+            }
+            lines.Add($"    {string.Join(" ", hexParts.Take(8))}  {string.Join(" ", hexParts.Skip(8))}");
+        }
+
+        // Find free sector ranges
+        var freeRanges = new List<(int Start, int End)>();
+        var i = 0;
+        while (i < bitmap.Length)
+        {
+            if (bitmap[i])
+            {
+                var fs = i + 1;
+                while (i < bitmap.Length && bitmap[i]) i++;
+                freeRanges.Add((fs, i));
+            }
+            else
+            {
+                i++;
+            }
+        }
+
+        lines.Add(string.Empty);
+        lines.Add("  Free sector ranges:");
+        if (freeRanges.Count == 0)
+        {
+            lines.Add("    (none)");
+        }
+        else
+        {
+            foreach (var range in freeRanges)
+            {
+                var count = range.End - range.Start + 1;
+                lines.Add($"    {range.Start:D3}-{range.End:D3} ({count} sectors)");
+            }
+        }
+
+        return string.Join('\n', lines);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────
@@ -498,5 +723,48 @@ public static class AtrForensicTools
             return string.Equals(entry.FileName, normalized, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(fullName, normalized, StringComparison.OrdinalIgnoreCase);
         });
+    }
+
+    private static SpartaDirEntry? MatchSpartaEntry(IReadOnlyList<SpartaDirEntry> entries, string requestedName)
+    {
+        var normalized = requestedName.Trim().ToUpperInvariant();
+        return entries.FirstOrDefault(entry =>
+            !entry.IsDeleted &&
+            string.Equals(entry.FileName.Trim().ToUpperInvariant(), normalized, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Extract a file from a SpartaDOS filesystem by following the sector chain.
+    /// SpartaDOS uses the same sector chain format as DOS 2.x (last 3 bytes of each sector).
+    /// </summary>
+    private static byte[] ExtractSpartaFile(byte[] data, AtrGeometry geometry, SpartaDirEntry entry)
+    {
+        var result = new List<byte>();
+        var seenSectors = new HashSet<int>();
+        var sector = entry.StartSector;
+
+        while (sector != 0)
+        {
+            if (!seenSectors.Add(sector))
+            {
+                throw new InvalidDataException($"Sector chain loop detected at sector {sector}.");
+            }
+
+            var rawSector = AtrParser.ReadSector(data, geometry, sector);
+            if (rawSector.Length < 4)
+            {
+                throw new InvalidDataException($"Sector {sector} is too small to contain chain metadata.");
+            }
+
+            var dataCapacity = rawSector.Length - 3;
+            var usedBytes = Math.Min(rawSector[^1], dataCapacity);
+            result.AddRange(rawSector.AsSpan(0, usedBytes).ToArray());
+
+            var nextHi = rawSector[^3] & 0x03;
+            var nextLo = rawSector[^2];
+            sector = (nextHi << 8) | nextLo;
+        }
+
+        return result.ToArray();
     }
 }

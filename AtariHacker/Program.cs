@@ -161,13 +161,15 @@ public static class Program
         var hdOffsetArg = new Argument<string>("offset", "File offset as decimal or hex");
         var hdBytesArg = new Argument<int>("bytes", "Number of bytes to dump");
         var hdAddrOpt = new Option<string?>("--start-address", "Override memory start address");
+        var hdSectorAwareOpt = new Option<bool>("--sector-aware", "Show sector numbers when dumping ATR data");
         hexDumpCommand.AddArgument(hdOffsetArg);
         hexDumpCommand.AddArgument(hdBytesArg);
         hexDumpCommand.AddOption(hdAddrOpt);
-        hexDumpCommand.SetHandler((string offset, int bytes, string? addr, string? target, string? config, bool verbose) =>
+        hexDumpCommand.AddOption(hdSectorAwareOpt);
+        hexDumpCommand.SetHandler((string offset, int bytes, string? addr, bool sectorAware, string? target, string? config, bool verbose) =>
         {
-            Run((s, v) => HexDumpTool.HexDump(s.Rom, offset, bytes, addr), target, config, verbose);
-        }, hdOffsetArg, hdBytesArg, hdAddrOpt, targetOption, configOption, verboseOption);
+            Run((s, v) => HexDumpTool.HexDump(s.Rom, offset, bytes, addr, sectorAware), target, config, verbose);
+        }, hdOffsetArg, hdBytesArg, hdAddrOpt, hdSectorAwareOpt, targetOption, configOption, verboseOption);
 
         // ═══════════════════════════════════════════════════════════════════
         // SEARCH
@@ -670,14 +672,18 @@ public static class Program
         var atrCreateOutputArg = new Argument<string>("output", "Output path");
         var atrCreateSectorsArg = new Argument<int>("sectors", "Number of sectors (720, 1040, etc.)");
         var atrCreateDensityArg = new Argument<string>("density", "Density: sd (single), dd (double), ed (enhanced)");
+        var atrCreateFilesystemOpt = new Option<string?>("--filesystem", "Initialize filesystem: dos2 or spartados");
+        var atrCreateManifestOpt = new Option<string?>("--manifest", "Path to JSON/YAML manifest file for disk layout");
         var atrCreateDryRunOpt = new Option<bool>("--dry-run", "Show what would be created without writing");
         atrCreateCommand.AddArgument(atrCreateOutputArg);
         atrCreateCommand.AddArgument(atrCreateSectorsArg);
         atrCreateCommand.AddArgument(atrCreateDensityArg);
+        atrCreateCommand.AddOption(atrCreateFilesystemOpt);
+        atrCreateCommand.AddOption(atrCreateManifestOpt);
         atrCreateCommand.AddOption(atrCreateDryRunOpt);
-        atrCreateCommand.SetHandler((string output, int sectors, string density, bool dryRun) =>
-            Console.WriteLine(AtrWriteTools.CreateAtr(output, sectors, density, dryRun)),
-            atrCreateOutputArg, atrCreateSectorsArg, atrCreateDensityArg, atrCreateDryRunOpt);
+        atrCreateCommand.SetHandler((string output, int sectors, string density, string? filesystem, string? manifest, bool dryRun) =>
+            Console.WriteLine(AtrWriteTools.CreateAtr(output, sectors, density, filesystem, manifest, dryRun)),
+            atrCreateOutputArg, atrCreateSectorsArg, atrCreateDensityArg, atrCreateFilesystemOpt, atrCreateManifestOpt, atrCreateDryRunOpt);
         atrCommand.AddCommand(atrCreateCommand);
 
         var atrExtractCommand = new Command("extract", "Extract a file from an ATR image and save to disk");
@@ -785,6 +791,124 @@ public static class Program
             Console.WriteLine(AtrWriteTools.DefineFilesystem(path, dirOff, entrySize, fnLen, extLen, startOff, sectorCountOff)),
             atrFsPathArg, atrFsDirOffsetArg, atrFsEntrySizeArg, atrFsFnLenArg, atrFsExtLenArg, atrFsStartOffArg, atrFsSectorCountOffArg);
         atrCommand.AddCommand(atrFsCommand);
+
+        // ─── New ATR file operations (v3) ───────────────────────────────
+
+        var atrLoadFileCommand = new Command("load-file", "Load a specific file from the ATR into the session");
+        var atrLfPathArg = new Argument<string>("path", "Path to the ATR file");
+        var atrLfNameArg = new Argument<string>("name", "Filename to extract from the ATR directory");
+        var atrLfAddrOpt = new Option<string?>("--load-address", "Override load address (hex)");
+        atrLoadFileCommand.AddArgument(atrLfPathArg);
+        atrLoadFileCommand.AddArgument(atrLfNameArg);
+        atrLoadFileCommand.AddOption(atrLfAddrOpt);
+        atrLoadFileCommand.SetHandler((string path, string name, string? loadAddr, string? target, string? config) =>
+        {
+            var s = CreateCliSession();
+            var err = EnsureLoaded(s, target, config);
+            if (err != string.Empty)
+            {
+                Console.Error.WriteLine(err);
+                return;
+            }
+            ushort? addr = null;
+            if (!string.IsNullOrWhiteSpace(loadAddr))
+                addr = AddressParser.ParseAddress(loadAddr);
+            Console.WriteLine(AtrTools.LoadAtrFile(s.Rom, s.Symbols, s.ZeroPage, s.Persistence, path, name, addr));
+        }, atrLfPathArg, atrLfNameArg, atrLfAddrOpt, targetOption, configOption);
+        atrCommand.AddCommand(atrLoadFileCommand);
+
+        var atrAnalyzeLayoutCommand = new Command("analyze-layout", "Full disk structure analysis");
+        var atrAlPathArg = new Argument<string>("path", "Path to the ATR file");
+        atrAnalyzeLayoutCommand.AddArgument(atrAlPathArg);
+        atrAnalyzeLayoutCommand.SetHandler((string path) =>
+            Console.WriteLine(AtrTools.AnalyzeLayout(path)), atrAlPathArg);
+        atrCommand.AddCommand(atrAnalyzeLayoutCommand);
+
+        var atrDisassembleSectorCommand = new Command("disassemble-sector", "Disassemble specific sectors as code");
+        var atrDsPathArg = new Argument<string>("path", "Path to the ATR file");
+        var atrDsStartArg = new Argument<int>("start-sector", "Starting sector number (1-based)");
+        var atrDsCountArg = new Argument<int>("sector-count", "Number of consecutive sectors to disassemble");
+        var atrDsAddrOpt = new Option<string?>("--load-address", "Load address (hex) for disassembly");
+        var atrDsFormatOpt = new Option<string>("--format", () => "listing", "Output format: listing, ca65, atasm, or mac65");
+        var atrDsAnalyzeOpt = new Option<bool>("--analyze", "Use multi-pass analysis for label generation");
+        atrDisassembleSectorCommand.AddArgument(atrDsPathArg);
+        atrDisassembleSectorCommand.AddArgument(atrDsStartArg);
+        atrDisassembleSectorCommand.AddArgument(atrDsCountArg);
+        atrDisassembleSectorCommand.AddOption(atrDsAddrOpt);
+        atrDisassembleSectorCommand.AddOption(atrDsFormatOpt);
+        atrDisassembleSectorCommand.AddOption(atrDsAnalyzeOpt);
+        atrDisassembleSectorCommand.SetHandler((string path, int startSector, int sectorCount, string? loadAddr, string format, bool analyze, string? target, string? config) =>
+        {
+            var s = CreateCliSession();
+            var err = EnsureLoaded(s, target, config);
+            if (err != string.Empty)
+            {
+                Console.Error.WriteLine(err);
+                return;
+            }
+            ushort? addr = null;
+            if (!string.IsNullOrWhiteSpace(loadAddr))
+                addr = AddressParser.ParseAddress(loadAddr);
+            Console.WriteLine(AtrTools.DisassembleSector(s.Rom, s.Symbols, s.ZeroPage, path, startSector, sectorCount, addr, format, analyze));
+        }, atrDsPathArg, atrDsStartArg, atrDsCountArg, atrDsAddrOpt, atrDsFormatOpt, atrDsAnalyzeOpt, targetOption, configOption);
+        atrCommand.AddCommand(atrDisassembleSectorCommand);
+
+        var atrDumpCommand = new Command("dump", "Raw binary dump of ATR data (excluding 16-byte header)");
+        var atrDumpPathArg = new Argument<string>("path", "Path to the ATR file");
+        var atrDumpStartOpt = new Option<int?>("--start-sector", "Starting sector (1-based)");
+        var atrDumpEndOpt = new Option<int?>("--end-sector", "Ending sector (inclusive, 1-based)");
+        var atrDumpOutputOpt = new Option<string?>("--output", "Output file path (omit for hex dump to stdout)");
+        atrDumpCommand.AddArgument(atrDumpPathArg);
+        atrDumpCommand.AddOption(atrDumpStartOpt);
+        atrDumpCommand.AddOption(atrDumpEndOpt);
+        atrDumpCommand.AddOption(atrDumpOutputOpt);
+        atrDumpCommand.SetHandler((string path, int? startSector, int? endSector, string? output) =>
+            Console.WriteLine(AtrTools.DumpAtrData(path, startSector, endSector, output)),
+            atrDumpPathArg, atrDumpStartOpt, atrDumpEndOpt, atrDumpOutputOpt);
+        atrCommand.AddCommand(atrDumpCommand);
+
+        var atrWriteBootCommand = new Command("write-boot", "Write boot sectors to an ATR image");
+        var atrWbPathArg = new Argument<string>("path", "Path to the ATR file");
+        var atrWbBootFileArg = new Argument<string>("boot-file", "Path to the boot loader binary file (up to 384 bytes)");
+        var atrWbFlagOpt = new Option<byte?>("--boot-flag", "Boot flag byte (default: 0x00 = continue loading)");
+        var atrWbLoadAddrOpt = new Option<string?>("--load-address", "Load address (hex, default: $0700)");
+        var atrWbInitAddrOpt = new Option<string?>("--init-address", "Init address (hex, default: $0700)");
+        atrWriteBootCommand.AddArgument(atrWbPathArg);
+        atrWriteBootCommand.AddArgument(atrWbBootFileArg);
+        atrWriteBootCommand.AddOption(atrWbFlagOpt);
+        atrWriteBootCommand.AddOption(atrWbLoadAddrOpt);
+        atrWriteBootCommand.AddOption(atrWbInitAddrOpt);
+        atrWriteBootCommand.SetHandler((string path, string bootFile, byte? bootFlag, string? loadAddr, string? initAddr) =>
+        {
+            ushort? load = null;
+            ushort? init = null;
+            if (!string.IsNullOrWhiteSpace(loadAddr))
+                load = AddressParser.ParseAddress(loadAddr);
+            if (!string.IsNullOrWhiteSpace(initAddr))
+                init = AddressParser.ParseAddress(initAddr);
+            Console.WriteLine(AtrTools.WriteBootSectors(path, bootFile, bootFlag, load, init));
+        }, atrWbPathArg, atrWbBootFileArg, atrWbFlagOpt, atrWbLoadAddrOpt, atrWbInitAddrOpt);
+        atrCommand.AddCommand(atrWriteBootCommand);
+
+        var atrSectorInfoCommand = new Command("sector-info", "Detailed information about one or more sectors");
+        var atrSiPathArg = new Argument<string>("path", "Path to the ATR file");
+        var atrSiRangeArg = new Argument<string>("sector-range", "Sector number or range (e.g., '1', '1-5', '1,3,5')");
+        atrSectorInfoCommand.AddArgument(atrSiPathArg);
+        atrSectorInfoCommand.AddArgument(atrSiRangeArg);
+        atrSectorInfoCommand.SetHandler((string path, string range) =>
+            Console.WriteLine(AtrTools.SectorInfo(path, range)),
+            atrSiPathArg, atrSiRangeArg);
+        atrCommand.AddCommand(atrSectorInfoCommand);
+
+        var atrDiffCommand = new Command("diff", "Compare ATR images filesystem-aware");
+        var atrDiffFile1Arg = new Argument<string>("file1", "Path to the first ATR file");
+        var atrDiffFile2Arg = new Argument<string>("file2", "Path to the second ATR file");
+        atrDiffCommand.AddArgument(atrDiffFile1Arg);
+        atrDiffCommand.AddArgument(atrDiffFile2Arg);
+        atrDiffCommand.SetHandler((string f1, string f2) =>
+            Console.WriteLine(AtrTools.DiffAtrImages(f1, f2)),
+            atrDiffFile1Arg, atrDiffFile2Arg);
+        atrCommand.AddCommand(atrDiffCommand);
 
         // ─── New forensic commands (v2) ─────────────────────────────────
 

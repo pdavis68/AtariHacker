@@ -25,7 +25,9 @@ public sealed record ReferenceGraph(
     // Addresses that are definitely data
     HashSet<ushort> DataAddresses,
     // All instruction addresses (for code region detection)
-    HashSet<ushort> InstructionAddresses)
+    HashSet<ushort> InstructionAddresses,
+    // Detected boot header info (if found at the start of the binary)
+    BootHeaderInfo? BootHeader = null)
 {
     public static ReferenceGraph Empty { get; } = new(
         new HashSet<ushort>(),
@@ -36,7 +38,8 @@ public sealed record ReferenceGraph(
         new HashSet<byte>(),
         new HashSet<ushort>(),
         new HashSet<ushort>(),
-        new HashSet<ushort>());
+        new HashSet<ushort>(),
+        BootHeader: null);
 }
 
 /// <summary>
@@ -179,8 +182,10 @@ public static class DisassemblyAnalyzer
         // Detect Atari boot sector header (6 bytes at the start of the binary)
         // Pattern: [boot_flag] [sector_count] [load_addr_lo] [load_addr_hi] [init_addr_lo] [init_addr_hi]
         // Boot flag is typically $00 (continue) or $D0 (stop/run)
+        BootHeaderInfo? bootHeader = null;
         if (data.Length >= 6 && (data[0] == 0x00 || data[0] == 0xD0))
         {
+            bootHeader = AtrParser.TryParseBootHeader(data.AsSpan(0, 6));
             for (var i = 0; i < 6; i++)
             {
                 var hdrAddr = ResolveAddress(segments, baseAddress, i);
@@ -200,7 +205,8 @@ public static class DisassemblyAnalyzer
             indirectDataReferences,
             codeEntryPoints,
             dataAddresses,
-            instructionAddresses);
+            instructionAddresses,
+            BootHeader: bootHeader);
     }
 
     /// <summary>
