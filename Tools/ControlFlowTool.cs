@@ -1,3 +1,4 @@
+using AtariHacker.Analysis;
 using AtariHacker.Atari;
 using AtariHacker.Helpers;
 using AtariHacker.State;
@@ -13,7 +14,8 @@ public static class ControlFlowTool
         string address,
         int maxDepth = 5,
         int maxInstructions = 500,
-        string format = "text")
+        string format = "text",
+        bool trackStack = false)
     {
         try
         {
@@ -27,6 +29,14 @@ public static class ControlFlowTool
             if (startOffset is null)
             {
                 return $"ERROR: Address {Formatting.HexWord(startAddress)} is not covered by the loaded ROM.";
+            }
+
+            // If stack tracking is requested, use StackAnalyzer
+            if (trackStack)
+            {
+                var result = StackAnalyzer.AnalyzeStack(
+                    session.Data, startAddress, maxInstructions);
+                return StackAnalyzer.FormatStackAnalysis(result, format);
             }
 
             var budget = Math.Max(1, maxInstructions);

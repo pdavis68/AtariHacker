@@ -1,4 +1,5 @@
 ﻿using System.CommandLine;
+using AtariHacker.Analysis;
 using AtariHacker.Atari;
 using AtariHacker.Helpers;
 using AtariHacker.State;
@@ -288,14 +289,16 @@ public static class Program
         var traceAddrArg = new Argument<string>("address", "Starting memory address");
         var traceDepthOpt = new Option<int>("--max-depth", () => 5, "Maximum call depth");
         var traceBudgetOpt = new Option<int>("--max-instructions", () => 500, "Instruction budget");
+        var traceStackOpt = new Option<bool>("--stack", "Track stack depth and annotate trace lines");
         traceCommand.AddArgument(traceAddrArg);
         traceCommand.AddOption(traceDepthOpt);
         traceCommand.AddOption(traceBudgetOpt);
+        traceCommand.AddOption(traceStackOpt);
         traceCommand.AddOption(FormatOption.Option);
-        traceCommand.SetHandler((string addr, int depth, int budget, string format, string? target, string? config, bool verbose) =>
+        traceCommand.SetHandler((string addr, int depth, int budget, bool trackStack, string format, string? target, string? config, bool verbose) =>
         {
-            Run((s, v) => ControlFlowTool.TraceControlFlow(s.Rom, s.Symbols, s.ZeroPage, addr, depth, budget, format), target, config, verbose);
-        }, traceAddrArg, traceDepthOpt, traceBudgetOpt, FormatOption.Option, targetOption, configOption, verboseOption);
+            Run((s, v) => ControlFlowTool.TraceControlFlow(s.Rom, s.Symbols, s.ZeroPage, addr, depth, budget, format, trackStack), target, config, verbose);
+        }, traceAddrArg, traceDepthOpt, traceBudgetOpt, traceStackOpt, FormatOption.Option, targetOption, configOption, verboseOption);
 
         var xrefCommand = new Command("xref", "Find locations that reference a target address");
         var xrefAddrArg = new Argument<string>("address", "Target address to cross-reference");
@@ -324,6 +327,38 @@ public static class Program
         {
             Run((s, v) => DataFlowTool.TraceAccess(s.Rom, s.Symbols, s.ZeroPage, addr, direction, depth, budget, format), target, config, verbose);
         }, taAddrArg, taDirectionOpt, taDepthOpt, taBudgetOpt, FormatOption.Option, targetOption, configOption, verboseOption);
+
+        // ─── detect-patterns: Control flow pattern detection ────────────────
+
+        var detectPatternsCommand = new Command("detect-patterns", "Scan for control flow patterns: state machines, jump tables, coroutines, interrupt handlers");
+        var dpTypeOpt = new Option<string?>("--type", "Filter by pattern type: state-machine, jump-table, coroutine, interrupt");
+        detectPatternsCommand.AddOption(dpTypeOpt);
+        detectPatternsCommand.AddOption(FormatOption.Option);
+        detectPatternsCommand.SetHandler((string? type, string format, string? target, string? config, bool verbose) =>
+        {
+            Run((s, v) => PatternDetectionTool.DetectPatterns(s.Rom, type, format), target, config, verbose);
+        }, dpTypeOpt, FormatOption.Option, targetOption, configOption, verboseOption);
+
+        // ─── stack-analyze: Stack depth analysis ────────────────────────────
+
+        var stackAnalyzeCommand = new Command("stack-analyze", "Analyze stack usage at a given address");
+        var saAddrArg = new Argument<string>("address", "Starting memory address");
+        var saBudgetOpt = new Option<int>("--max-instructions", () => 500, "Instruction budget for the analysis");
+        stackAnalyzeCommand.AddArgument(saAddrArg);
+        stackAnalyzeCommand.AddOption(saBudgetOpt);
+        stackAnalyzeCommand.AddOption(FormatOption.Option);
+        stackAnalyzeCommand.SetHandler((string addr, int budget, string format, string? target, string? config, bool verbose) =>
+        {
+            Run((s, v) =>
+            {
+                if (!s.Rom.IsLoaded || s.Rom.Data is null)
+                    return "ERROR: No ROM is currently loaded. Use LoadRom first.";
+
+                var startAddr = AddressParser.ParseAddress(addr);
+                var result = StackAnalyzer.AnalyzeStack(s.Rom.Data, startAddr, budget);
+                return StackAnalyzer.FormatStackAnalysis(result, format);
+            }, target, config, verbose);
+        }, saAddrArg, saBudgetOpt, FormatOption.Option, targetOption, configOption, verboseOption);
 
         // ═══════════════════════════════════════════════════════════════════
         // SYMBOL COMMANDS
@@ -895,6 +930,8 @@ public static class Program
         rootCommand.AddCommand(traceCommand);
         rootCommand.AddCommand(xrefCommand);
         rootCommand.AddCommand(traceAccessCommand);
+        rootCommand.AddCommand(detectPatternsCommand);
+        rootCommand.AddCommand(stackAnalyzeCommand);
         rootCommand.AddCommand(symbolCommand);
         rootCommand.AddCommand(segmentCommand);
         rootCommand.AddCommand(patternsCommand);
