@@ -301,6 +301,16 @@ When `--analyze` is used, the engine performs multi-pass analysis (see [Section 
 - **Segment-aware output** — `.segment` directives when segments are defined
 - **ATASCII string formatting** — printable ATASCII bytes rendered as string literals
 - **Hardware register symbols** — known Atari register names (DMACTL, AUDF1, etc.) shown in operands
+- **Boot header structural recognition** — when the loaded binary starts with an Atari boot header (6 bytes: boot flag, sector count, load address, init address), the analyzer detects it as a single structural unit and emits it as grouped `.byte`/`.word` directives with descriptive comments, rather than individual mislabeled bytes
+
+**Boot header example (ca65 analyzed output):**
+```ca65
+; Boot header
+    .byte   $D0             ; Boot flag: $D0 = stop/run
+    .byte   $03             ; Sectors to load: 3
+    .word   $0700           ; Load address: $0700
+    .word   $1540           ; Init address: $1540
+```
 
 **Example ca65 analyzed output:**
 ```ca65
@@ -354,8 +364,9 @@ Produces a formatted hex dump with file offsets, memory addresses, and ASCII rep
 | Option | Description |
 |--------|-------------|
 | `--start-address <addr>` | Override the memory start address shown in the dump |
+| `--sector-aware` | Show sector numbers when dumping data from an ATR image |
 
-**Output format:**
+**Output format (standard):**
 ```
 Offset    Address   00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F  ASCII
 --------  --------  -----------------------------------------------  ----------------
@@ -363,9 +374,19 @@ $00000000  $0700    A9 00 8D 00 D4 A9 22 8D 02 D4 60 00 00 00 00 00  ......."...
 $00000010  $0710    4C 20 07 4C 30 07 00 FF FF 00 00 00 00 00 00 00  L .L0.............
 ```
 
+**Output format (sector-aware, with `--sector-aware` on ATR data):**
+```
+Offset    Sector    Address   00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F  ASCII
+--------  --------  --------  -----------------------------------------------  ----------------
+$00000010  Sctr 001  --------  D0 03 00 07 40 15 00 00 00 00 00 00 00 00 00 00  ....@...........
+$00000090  Sctr 002  --------  03 03 A9 31 8D 02 D4 A9 00 8D 00 D4 60 00 00 00  ...1..........`..
+$00000110  Sctr 003  --------  29 13 9D 31 9D 00 D4 A9 22 8D 02 D4 60 00 00 00  )..1....."....`..
+```
+
 ```bash
 atarihacker hex-dump 0 256
 atarihacker hex-dump $100 128 --start-address $0800
+atarihacker hex-dump 0 384 --sector-aware   # show sector boundaries for ATR data
 ```
 
 ---
@@ -1179,13 +1200,13 @@ ATR Header: /path/to/disk.atr
 
 #### `atr directory <path>`
 
-List the directory of a DOS-formatted ATR disk image. Shows active files with their sector counts, start sectors, and flags (binary, locked). Also shows deleted files count and free space.
+List the directory of a DOS-formatted ATR disk image. Supports **DOS 2.x** and **SpartaDOS** filesystems. Shows active files with their sector counts, start sectors, and flags (binary, locked). Also shows deleted files count and free space.
 
 ```bash
 atarihacker atr directory disk.atr
 ```
 
-**Output:**
+**Output (DOS 2.x):**
 ```
 ATR Directory: /path/to/disk.atr
   #  Filename     Ext  Sectors  Start   Flags
@@ -1196,9 +1217,21 @@ ATR Directory: /path/to/disk.atr
 3 files, 46 sectors used, 674 sectors free
 ```
 
+**Output (SpartaDOS):**
+```
+ATR Directory: /path/to/disk.atr
+Filesystem: SpartaDOS
+  #  Filename                   Start  Flags
+  0  DOS.SYS                     13    []
+  1  AUTORUN.SYS                 33    []
+  2  AGENT.OBJ                   53    [binary]
+
+3 files, 22 sectors used, 698 sectors free
+```
+
 #### `atr create <output> <sectors> <density>`
 
-Create a new blank ATR disk image from scratch.
+Create a new ATR disk image from scratch, optionally with filesystem initialization and manifest-based disk creation.
 
 **Arguments:**
 
@@ -1207,6 +1240,14 @@ Create a new blank ATR disk image from scratch.
 | `output` | Output file path |
 | `sectors` | Number of sectors (e.g., 720, 1040) |
 | `density` | Density: `sd` (single, 128-byte sectors), `dd` (double, 256-byte), `ed` (enhanced, 128-byte) |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--filesystem <type>` | Initialize a filesystem: `dos2` or `spartados` |
+| `--manifest <path>` | JSON manifest file describing disk layout, boot sector, and files to inject |
+| `--dry-run` | Preview operations without writing changes |
 
 **Density specifications:**
 
@@ -1217,15 +1258,42 @@ Create a new blank ATR disk image from scratch.
 | `ed` | 128 bytes | Enhanced-density, 1040 sectors = 130 KB |
 
 ```bash
-# Create single-density 720-sector disk
+# Create a blank disk (no filesystem)
 atarihacker atr create build/disk.atr 720 sd
 
-# Create double-density disk
-atarihacker atr create build/disk.atr 720 dd
+# Create with DOS 2.x filesystem initialization
+atarihacker atr create build/disk.atr 720 sd --filesystem dos2
 
-# Create enhanced-density disk
-atarihacker atr create build/disk.atr 1040 ed
+# Create with SpartaDOS filesystem initialization
+atarihacker atr create build/disk.atr 720 sd --filesystem spartados
+
+# Create from manifest
+atarihacker atr create build/disk.atr --manifest disk.json
 ```
+
+**Manifest Schema (JSON):**
+
+```json
+{
+  "sectors": 720,
+  "density": "sd",
+  "filesystem": "spartados",
+  "boot": {
+    "flag": "$D0",
+    "sectors": 3,
+    "load_address": "$0700",
+    "init_address": "$1540",
+    "file": "build/boot-loader.bin"
+  },
+  "files": [
+    { "name": "DOS.SYS", "file": "build/dos.sys" },
+    { "name": "AUTORUN.SYS", "file": "build/autorun.sys" },
+    { "name": "AGENT.OBJ", "file": "build/agent.obj" }
+  ]
+}
+```
+
+When `--filesystem` is specified, the command initializes the VTOC/bitmap, boot sectors, and empty directory appropriate for the selected filesystem type. When `--manifest` is used, the disk is created with the specified layout, boot sector, and files injected automatically.
 
 #### `atr extract <path> <name> <output>`
 
@@ -1395,6 +1463,186 @@ atarihacker atr search-boot disk1.atr disk2.atr disk3.atr --mode diff
 ```
 
 In pattern mode without a pattern, it lists boot header info for each image.
+
+#### `atr load-file <path> <name> [options]`
+
+Load a specific file from an ATR disk image into the current session for disassembly or analysis. Supports DOS 2.x and SpartaDOS filesystems.
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `path` | Path to the ATR file |
+| `name` | Atari DOS filename to load (e.g., `AGENT.OBJ`) |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--load-address <addr>` | Override the load address for the extracted data |
+
+```bash
+atarihacker atr load-file game.atr AGENT.OBJ
+atarihacker atr load-file game.atr AGENT.OBJ --load-address $2000
+```
+
+**Output:**
+```
+Loaded AGENT.OBJ from ATR (DOS 2.x).
+File path : /path/to/game.atr
+File size : 2304 bytes ($0900)
+Format    : ATR (AGENT.OBJ)
+Segment 1: $0700 - $0FFF  (2304 bytes, file offset $0000)
+Sidecar   : loaded
+```
+
+#### `atr analyze-layout <path>`
+
+Perform comprehensive analysis of the disk layout, detecting the filesystem type, boot method, and mapping all sectors.
+
+```bash
+atarihacker atr analyze-layout game.atr
+```
+
+**Output:**
+```
+Filesystem: SpartaDOS
+Boot type: Custom loader ($D0 flag)
+Sectors: 720 × 128 bytes (SD)
+VTOC: Sector 4
+Directory: Sectors 5-12 (linked list, 8 directory sectors)
+Files:
+  DOS.SYS      — 20 sectors, starts at sector 13
+  AUTORUN.SYS  — 8 sectors, starts at sector 33
+  AGENT.OBJ    — 18 sectors, starts at sector 41
+Free sectors: 368-720 (352 sectors)
+```
+
+#### `atr disassemble-sector <path> <sector> <count> [options]`
+
+Disassemble a range of sectors from an ATR disk image as 6502 code, bridging the gap between raw sector access and code analysis.
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `path` | Path to the ATR file |
+| `sector` | Starting sector number (1-based) |
+| `count` | Number of consecutive sectors to disassemble |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--load-address <addr>` | Override the memory load address |
+| `--format <format>` | Output format: `listing` (default), `ca65`, `atasm`, or `mac65` |
+| `--analyze` | Use multi-pass analysis for label generation and code/data separation |
+
+```bash
+atarihacker atr disassemble-sector game.atr 1 3
+atarihacker atr disassemble-sector game.atr 1 3 --load-address $0700 --analyze
+```
+
+#### `atr dump <path> [options]`
+
+Dump the raw binary contents of an ATR (excluding the 16-byte ATR header) to stdout or a file. Supports optional sector range filtering.
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `path` | Path to the ATR file |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--start-sector <n>` | Starting sector number (1-based) |
+| `--end-sector <n>` | Ending sector number (inclusive) |
+| `--output <file>` | Output file path (writes to stdout if omitted) |
+
+```bash
+# Dump entire ATR data to stdout
+atarihacker atr dump game.atr
+
+# Dump a range of sectors to a file
+atarihacker atr dump game.atr --start-sector 1 --end-sector 3 --output boot.bin
+```
+
+#### `atr write-boot <path> <boot-file> [options]`
+
+Write a boot loader to an ATR image, properly handling the 6-byte boot header and sector alignment. Uses copy-on-write (creates `.modified` copy).
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `path` | Path to the ATR file |
+| `boot-file` | Path to the boot loader binary (up to 3 sectors, 384 bytes) |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--boot-flag <hex>` | Boot flag byte (default: `$00` for continue, `$D0` for stop/run) |
+| `--load-address <addr>` | Load address override |
+| `--init-address <addr>` | Init address override |
+
+```bash
+atarihacker atr write-boot build/disk.atr boot.bin
+atarihacker atr write-boot build/disk.atr boot.bin --boot-flag $D0 --load-address $0700 --init-address $1540
+```
+
+#### `atr sector-info <path> <range>`
+
+Show detailed information about one or more sectors, including whether they are part of the boot loader, VTOC, directory, a specific file, or free.
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `path` | Path to the ATR file |
+| `range` | Sector range (e.g., `1-10` or `5`) |
+
+```bash
+atarihacker atr sector-info game.atr 1-10
+```
+
+**Output:**
+```
+Sector 1: Boot (part of boot loader, 3 sectors)
+Sector 4: VTOC (SpartaDOS volume bitmap)
+Sector 5: Directory (SpartaDOS directory sector 1 of 8)
+Sector 13: File data (DOS.SYS, sector 1 of 20)
+Sector 369: Free
+```
+
+#### `atr diff <file1> <file2>`
+
+Compare two ATR images with filesystem-aware diffing, showing differences at the file level rather than just raw byte comparison.
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `file1` | Path to the first ATR file |
+| `file2` | Path to the second ATR file |
+
+```bash
+atarihacker atr diff disk_v1.atr disk_v2.atr
+```
+
+**Output:**
+```
+Comparing ATR images:
+  ATR headers: match
+  Boot sectors: match
+  Filesystem: SpartaDOS vs SpartaDOS
+
+  File differences:
+    AGENT.OBJ: 12 bytes differ at offsets $45, $67, $89
+    SCREEN.DAT: identical
+```
 
 #### `atr filesystem <path> <options>`
 
@@ -2446,13 +2694,20 @@ command_name param1=value1 param2=value2
 | `show_zero_page_map` | `zero-page show` | optional: `showUnannotated` |
 | `load_labels` | `labels load` | `filePath` |
 | `save_labels` | `labels save` | optional: `filePath` |
-| `create_atr` | `atr create` | `output`, `sectors`, `density`; optional: `dryRun` |
+| `create_atr` | `atr create` | `output`, `sectors`, `density`; optional: `filesystem`, `manifest`, `dryRun` |
 | `extract_atr_file` | `atr extract` | `filePath`, `name`, `output` |
 | `inject_atr_file` | `atr inject` | `filePath`, `name`, `input`; optional: `dryRun` |
 | `inject_all_atr_files` | `atr inject-all` | `filePath`, `sourceDir`; optional: `pattern`, `dryRun` |
 | `extract_all_atr_files` | `atr extract-all` | `filePath`; optional: `outputDir` |
 | `write_atr_sector` | `atr write-sector` | `filePath`, `sector`, `input`; optional: `dryRun` |
 | `write_atr_file` | `atr write-file` | `filePath`, `name`, `input`; optional: `startSector`, `dryRun` |
+| `load_atr_file` | `atr load-file` | `filePath`, `name`; optional: `loadAddress` |
+| `analyze_atr_layout` | `atr analyze-layout` | `filePath` |
+| `disassemble_atr_sector` | `atr disassemble-sector` | `filePath`, `sector`, `count`; optional: `loadAddress`, `format`, `analyze` |
+| `dump_atr_data` | `atr dump` | `filePath`; optional: `startSector`, `endSector`, `output` |
+| `write_atr_boot` | `atr write-boot` | `filePath`, `bootFile`; optional: `bootFlag`, `loadAddress`, `initAddress` |
+| `atr_sector_info` | `atr sector-info` | `filePath`, `range` |
+| `atr_diff` | `atr diff` | `file1`, `file2` |
 | `atr_sector_map` | `atr sector-map` | `filePath`; optional: `format` |
 | `atr_file_frag` | `atr file-frag` | `filePath`, `name` |
 | `atr_recover` | `atr recover` | `filePath`, `name`, `output` |
