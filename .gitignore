@@ -3,3 +3,4 @@ obj/
 bugreports/
 *.atr
 .atari-hacker.config
+*.atarihacker.json

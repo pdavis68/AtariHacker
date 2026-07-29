@@ -156,6 +156,17 @@ public static class AnalysisTools
             var (codeRegions, dataRegions) = DisassemblyAnalyzer.TraceCodeRegions(data, references, segments, baseAddress);
             var labelMap = DisassemblyAnalyzer.GenerateLabels(references, symbols, zeroPageMap, codeRegions);
 
+            // Persist generated labels into the symbol table so they are
+            // available to subsequent commands (e.g. 'symbol list') and
+            // saved to the sidecar file by persistence.Save() below.
+            foreach (var (addr, label) in labelMap.Labels)
+            {
+                if (!symbols.ContainsKey(addr))
+                {
+                    symbols[addr] = new SymbolEntry(label, Comment: null, IsHardware: false, IsUserDefined: false);
+                }
+            }
+
             if (verbose is not null)
             {
                 verbose.BytesProcessed = data.Length;
@@ -496,6 +507,17 @@ public static class AnalysisTools
 
             var startAddr = AddressParser.ParseAddress(start);
             var endAddr = AddressParser.ParseAddress(end);
+
+            // Validate addresses against the session's memory-mapped range.
+            // This ensures that raw file offsets (e.g. 0, 384) are not silently
+            // treated as memory addresses, and that hex addresses (e.g. 0x0700)
+            // are properly validated against the loaded data's address space.
+            var startOffset = XexAddressResolver.ResolveMemoryAddress(session, startAddr);
+            var endOffset = XexAddressResolver.ResolveMemoryAddress(session, endAddr);
+            if (startOffset is null || endOffset is null)
+            {
+                return $"ERROR: Address range ${startAddr:X4}–${endAddr:X4} is not in the loaded data.";
+            }
 
             var references = DisassemblyAnalyzer.Analyze(session.Data, session.Segments, session.BaseAddress);
             var (codeRegions, dataRegions) = DisassemblyAnalyzer.TraceCodeRegions(session.Data, references, session.Segments, session.BaseAddress);

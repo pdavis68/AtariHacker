@@ -357,7 +357,13 @@ public static class Program
                     return "ERROR: No ROM is currently loaded. Use LoadRom first.";
 
                 var startAddr = AddressParser.ParseAddress(addr);
-                var result = StackAnalyzer.AnalyzeStack(s.Rom.Data, startAddr, budget);
+                // Resolve the memory address to a file offset so the stack analyzer
+                // checks against the correct byte position in the data array,
+                // not against the raw memory address value (which may exceed data.Length).
+                var fileOffset = XexAddressResolver.ResolveMemoryAddress(s.Rom, startAddr);
+                if (fileOffset is null)
+                    return $"ERROR: Address {Formatting.HexWord(startAddr)} is not in the loaded data.";
+                var result = StackAnalyzer.AnalyzeStack(s.Rom.Data, (ushort)fileOffset.Value, budget);
                 return StackAnalyzer.FormatStackAnalysis(result, format);
             }, target, config, verbose);
         }, saAddrArg, saBudgetOpt, FormatOption.Option, targetOption, configOption, verboseOption);
@@ -467,11 +473,17 @@ public static class Program
 
         var segListCommand = new Command("list", "List all defined memory segments");
         segListCommand.AddOption(FormatOption.Option);
-        segListCommand.SetHandler((string format) =>
+        segListCommand.SetHandler((string format, string? target, string? config) =>
         {
             var s = CreateCliSession();
+            var err = EnsureLoaded(s, target, config);
+            if (err != string.Empty)
+            {
+                Console.Error.WriteLine(err);
+                return;
+            }
             Console.WriteLine(SegmentTools.ListSegments(s.Segments, format));
-        }, FormatOption.Option);
+        }, FormatOption.Option, targetOption, configOption);
         segmentCommand.AddCommand(segListCommand);
 
         var segClearCommand = new Command("clear", "Clear all defined memory segments");

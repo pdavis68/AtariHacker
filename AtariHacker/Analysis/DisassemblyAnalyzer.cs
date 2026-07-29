@@ -194,6 +194,19 @@ public static class DisassemblyAnalyzer
                     absoluteDataReferences.Add(hdrAddr.Value);
                 }
             }
+
+            // Add the boot header's init address as a code entry point so the
+            // tracing engine follows the initial JMP instruction at the entry
+            // point rather than treating it as unreachable data.
+            // Only add it if the address falls within the loaded data range.
+            if (bootHeader is not null)
+            {
+                var initOffset = ResolveFileOffset(segments, baseAddress, bootHeader.InitAddress, data.Length);
+                if (initOffset is not null)
+                {
+                    codeEntryPoints.Add(bootHeader.InitAddress);
+                }
+            }
         }
 
         return new ReferenceGraph(
