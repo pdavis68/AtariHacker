@@ -21,8 +21,28 @@ public static class AtrWriteTools
                 return $"ERROR: Not a valid ATR image: {filePath}";
 
             var geo = AtrParser.ParseGeometry(data);
+
+            // Try DOS 2.x first
             var directory = AtrParser.ReadDirectory(data);
             var match = MatchEntry(directory, name);
+
+            // Try MyDOS if not found
+            if (match is null && AtrParser.HasMyDosFilesystem(data))
+            {
+                var myDosDir = AtrParser.ReadMyDosDirectory(data);
+                var myDosEntry = myDosDir.FirstOrDefault(e =>
+                    !e.IsDeleted && string.Equals(
+                        (string.IsNullOrWhiteSpace(e.Extension) ? e.FileName : $"{e.FileName}.{e.Extension}"),
+                        name.Trim(), StringComparison.OrdinalIgnoreCase));
+                if (myDosEntry is not null)
+                {
+                    match = new AtrDirectoryEntry(
+                        myDosEntry.Index, myDosEntry.FileName, myDosEntry.Extension,
+                        myDosEntry.StartSector, myDosEntry.SectorCount,
+                        myDosEntry.IsDeleted, myDosEntry.IsLocked, myDosEntry.IsBinary);
+                }
+            }
+
             if (match is null || match.IsDeleted)
                 return $"ERROR: File \"{name}\" not found in ATR directory.";
 
@@ -59,8 +79,28 @@ public static class AtrWriteTools
                 return $"ERROR: Not a valid ATR image: {filePath}";
 
             var geo = AtrParser.ParseGeometry(data);
+
+            // Try DOS 2.x first
             var directory = AtrParser.ReadDirectory(data);
             var match = MatchEntry(directory, name);
+
+            // Try MyDOS if not found
+            if (match is null && AtrParser.HasMyDosFilesystem(data))
+            {
+                var myDosDir = AtrParser.ReadMyDosDirectory(data);
+                var myDosEntry = myDosDir.FirstOrDefault(e =>
+                    !e.IsDeleted && string.Equals(
+                        (string.IsNullOrWhiteSpace(e.Extension) ? e.FileName : $"{e.FileName}.{e.Extension}"),
+                        name.Trim(), StringComparison.OrdinalIgnoreCase));
+                if (myDosEntry is not null)
+                {
+                    match = new AtrDirectoryEntry(
+                        myDosEntry.Index, myDosEntry.FileName, myDosEntry.Extension,
+                        myDosEntry.StartSector, myDosEntry.SectorCount,
+                        myDosEntry.IsDeleted, myDosEntry.IsLocked, myDosEntry.IsBinary);
+                }
+            }
+
             if (match is null || match.IsDeleted)
                 return $"ERROR: File \"{name}\" not found in ATR directory.";
 
@@ -114,7 +154,7 @@ public static class AtrWriteTools
                 remaining -= chunkSize;
 
                 // Get next sector from chain
-                var nextHi = sectorData[^3] & 0x03;
+                var nextHi = sectorData[^3];
                 var nextLo = sectorData[^2];
                 sector = (nextHi << 8) | nextLo;
             }
@@ -212,6 +252,10 @@ public static class AtrWriteTools
             else if (string.Equals(filesystem, "spartados", StringComparison.OrdinalIgnoreCase))
             {
                 InitializeSpartaDosFilesystem(image, geo);
+            }
+            else if (string.Equals(filesystem, "mydos", StringComparison.OrdinalIgnoreCase))
+            {
+                InitializeMyDosFilesystem(image, geo);
             }
 
             // Write the image to disk
@@ -376,6 +420,81 @@ public static class AtrWriteTools
         WriteSectorRaw(image, geo, 5, dirSector);
     }
 
+    // ─── MyDOS Filesystem Initialization ────────────────────────────────────
+
+    private static void InitializeMyDosFilesystem(byte[] image, AtrGeometry geo)
+    {
+        if (geo.SectorCount < 368)
+            throw new InvalidDataException($"MyDOS filesystem requires at least 368 sectors (got {geo.SectorCount}).");
+
+        // Write boot sectors (sectors 1-3)
+        WriteBootSector(image, geo, 1, InitializeBootSectorData(0, 3, 0x0700, 0x0700));
+        WriteBootSector(image, geo, 2, new byte[SectorSizeForSector(geo, 2)]);
+        WriteBootSector(image, geo, 3, new byte[SectorSizeForSector(geo, 3)]);
+
+        // Write MyDOS VTOC sector (sector 360) with extended marker
+        WriteMyDosVtocSector(image, geo);
+
+        // Write empty directory sectors (sectors 361-368)
+        var maxDirSector = Math.Min(368, geo.SectorCount);
+        for (var sector = 361; sector <= maxDirSector; sector++)
+        {
+            var dirSector = new byte[SectorSizeForSector(geo, sector)];
+            WriteSectorRaw(image, geo, sector, dirSector);
+        }
+    }
+
+    private static void WriteMyDosVtocSector(byte[] image, AtrGeometry geo)
+    {
+        var vtoc = new byte[SectorSizeForSector(geo, 360)];
+        // MyDOS VTOC format:
+        // Byte 0: DOS code (0x02 for MyDOS)
+        vtoc[0] = 0x02;
+        // Bytes 1-2: Total sectors (little-endian)
+        vtoc[1] = (byte)(geo.SectorCount & 0xFF);
+        vtoc[2] = (byte)((geo.SectorCount >> 8) & 0xFF);
+        // Bytes 3-4: Free sectors
+        var dirSectors = Math.Min(geo.SectorCount - 360, 8);
+        var freeSectors = geo.SectorCount - 3 - 1 - dirSectors; // 3 boot + 1 VTOC + dirSectors
+        vtoc[3] = (byte)(freeSectors & 0xFF);
+        vtoc[4] = (byte)((freeSectors >> 8) & 0xFF);
+        // Byte 5: VTOC flag ($02 = MyDOS extended)
+        vtoc[5] = 0x02;
+        // Bytes 6-7: Next VTOC sector (0 = last)
+        vtoc[6] = 0;
+        vtoc[7] = 0;
+        // Bytes 8-9: Reserved
+        // Bytes 10-127: Bitmap (1 = free, 0 = allocated)
+        // Mark boot sectors (1-3), VTOC (360), and directory sectors (361-368) as used
+        const int bitmapOffset = 10;
+        // Mark all sectors as free (1) in the bitmap
+        for (var i = bitmapOffset; i < vtoc.Length; i++)
+            vtoc[i] = 0xFF;
+
+        // Mark boot sectors as used (0)
+        for (var s = 1; s <= 3; s++)
+        {
+            var byteIdx = bitmapOffset + ((s - 1) / 8);
+            var bitIdx = (s - 1) % 8;
+            vtoc[byteIdx] &= (byte)~(1 << bitIdx);
+        }
+
+        // Mark VTOC as used (sector 360)
+        var vtocByteIdx = bitmapOffset + ((360 - 1) / 8);
+        var vtocBitIdx = (360 - 1) % 8;
+        vtoc[vtocByteIdx] &= (byte)~(1 << vtocBitIdx);
+
+        // Mark directory sectors as used (361-368)
+        for (var s = 361; s <= 368 && s <= geo.SectorCount; s++)
+        {
+            var dbIdx = bitmapOffset + ((s - 1) / 8);
+            var dbBit = (s - 1) % 8;
+            vtoc[dbIdx] &= (byte)~(1 << dbBit);
+        }
+
+        WriteSectorRaw(image, geo, 360, vtoc);
+    }
+
     private static void WriteSpartaVtocSector(byte[] image, AtrGeometry geo)
     {
         var vtoc = new byte[SectorSizeForSector(geo, 4)];
@@ -426,6 +545,7 @@ public static class AtrWriteTools
         }
         else
         {
+            // DOS 2.x and MyDOS use the same directory/sector chain format
             return InjectDosFileDuringCreation(outputPath, fileEntry, image, geo, inputData);
         }
     }
@@ -466,7 +586,7 @@ public static class AtrWriteTools
 
             // Set chain bytes
             var nextSector = i < requiredSectors - 1 ? currentSector + 1 : 0;
-            sectorData[^3] = (byte)((nextSector >> 8) & 0x03);
+            sectorData[^3] = (byte)((nextSector >> 8) & 0xFF);
             sectorData[^2] = (byte)(nextSector & 0xFF);
             sectorData[^1] = (byte)chunkSize;
 
@@ -547,7 +667,7 @@ public static class AtrWriteTools
 
             // Set chain bytes
             var nextSector = i < requiredSectors - 1 ? currentSector + 1 : 0;
-            sectorData[^3] = (byte)((nextSector >> 8) & 0x03);
+            sectorData[^3] = (byte)((nextSector >> 8) & 0xFF);
             sectorData[^2] = (byte)(nextSector & 0xFF);
             sectorData[^1] = (byte)chunkSize;
 
@@ -881,7 +1001,7 @@ public static class AtrWriteTools
 
                 // Set chain bytes
                 var nextSector = i < requiredSectors - 1 ? currentSector + 1 : 0;
-                sectorData[^3] = (byte)((nextSector >> 8) & 0x03);
+                sectorData[^3] = (byte)((nextSector >> 8) & 0xFF);
                 sectorData[^2] = (byte)(nextSector & 0xFF);
                 sectorData[^1] = (byte)chunkSize;
 

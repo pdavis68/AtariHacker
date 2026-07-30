@@ -40,6 +40,11 @@ public static class AtrTools
                 return FormatAtrInfoSparta(bytes, geometry, resolvedPath);
             }
 
+            if (AtrParser.HasMyDosFilesystem(bytes))
+            {
+                return FormatAtrInfoMyDos(bytes, geometry, resolvedPath, lines);
+            }
+
             lines.Add("No DOS 2.x or SpartaDOS filesystem detected. This disk uses a custom/non-DOS layout.");
             lines.Add("Use load_atr_boot to inspect the boot loader or load_rom for raw binary access.");
             return string.Join('\n', lines);
@@ -111,6 +116,39 @@ public static class AtrTools
         return string.Join('\n', lines);
     }
 
+    private static string FormatAtrInfoMyDos(byte[] bytes, AtrGeometry geometry, string resolvedPath, List<string> lines)
+    {
+        lines.Add("Filesystem: MyDOS");
+        var freeSectors = AtrParser.GetMyDosFreeSectorCount(bytes, geometry);
+        lines.Add($"Free     : {freeSectors} sectors");
+        lines.Add(string.Empty);
+        lines.Add("Directory:");
+        lines.Add("  #  Filename     Ext  Sectors  Bytes   Start  Flags");
+
+        var directory = AtrParser.ReadMyDosDirectory(bytes).Where(entry => !entry.IsDeleted).ToList();
+        foreach (var entry in directory)
+        {
+            try
+            {
+                var extracted = AtrParser.ExtractFile(bytes, geometry,
+                    new AtrDirectoryEntry(entry.Index, entry.FileName, entry.Extension,
+                        entry.StartSector, entry.SectorCount, entry.IsDeleted, entry.IsLocked, entry.IsBinary));
+                var flags = new List<string>();
+                if (entry.IsBinary) flags.Add("binary");
+                if (entry.IsLocked) flags.Add("locked");
+                if (entry.IsSubdirectory) flags.Add("subdir");
+                var displayFlags = flags.Count == 0 ? "[]" : $"[{string.Join(',', flags)}]";
+                lines.Add($"  {entry.Index,2}  {entry.FileName,-12} {entry.Extension,-3} {entry.SectorCount,7} {extracted.Length,6} {entry.StartSector,6}  {displayFlags}");
+            }
+            catch (Exception)
+            {
+                lines.Add($"  {entry.Index,2}  {entry.FileName,-12} {entry.Extension,-3} {"???",7} {"???",6} {entry.StartSector,6}  [unreadable]");
+            }
+        }
+
+        return string.Join('\n', lines);
+    }
+
     public static string LoadAtrFile(
         RomSession session,
         SymbolTable symbols,
@@ -147,6 +185,17 @@ public static class AtrTools
                 var spartaDir = AtrParser.ReadSpartaDirectory(bytes);
                 spartaMatch = MatchSpartaEntry(spartaDir, fileName);
                 isSparta = true;
+            }
+
+            // Try MyDOS as a final fallback (uses same directory format as DOS 2.x)
+            if (dosMatch is null && spartaMatch is null && AtrParser.HasMyDosFilesystem(bytes))
+            {
+                var myDosDir = AtrParser.ReadMyDosDirectory(bytes);
+                // Convert MyDosDirectoryEntry to AtrDirectoryEntry for matching
+                var converted = myDosDir.Select(e => new AtrDirectoryEntry(
+                    e.Index, e.FileName, e.Extension, e.StartSector, e.SectorCount,
+                    e.IsDeleted, e.IsLocked, e.IsBinary)).ToList();
+                dosMatch = MatchEntry(converted, fileName);
             }
 
             if (dosMatch is null && spartaMatch is null)
@@ -283,6 +332,11 @@ public static class AtrTools
                 return FormatListDirectorySparta(bytes, filePath);
             }
 
+            if (AtrParser.HasMyDosFilesystem(bytes))
+            {
+                return FormatListDirectoryMyDos(bytes, filePath);
+            }
+
             return "ERROR: No DOS 2.x or SpartaDOS filesystem detected on this disk image. " +
                    "This disk may use a custom/non-DOS layout. " +
                    "Use load_rom to load it as a raw binary, or load_atr_boot to inspect the boot loader.";
@@ -351,6 +405,38 @@ public static class AtrTools
 
         lines.Add("");
         lines.Add($"{active.Count} files{(deleted.Count > 0 ? $" ({deleted.Count} deleted hidden)" : "")}, {freeCount} sectors free");
+
+        return string.Join('\n', lines);
+    }
+
+    private static string FormatListDirectoryMyDos(byte[] bytes, string filePath)
+    {
+        var geo = AtrParser.ParseGeometry(bytes);
+        var allEntries = AtrParser.ReadMyDosDirectory(bytes);
+        var active = allEntries.Where(e => !e.IsDeleted).ToList();
+        var deleted = allEntries.Where(e => e.IsDeleted).ToList();
+
+        var lines = new List<string>
+        {
+            $"ATR Directory: {Path.GetFullPath(filePath)}",
+            "Filesystem: MyDOS",
+            "  #  Filename     Ext  Sectors  Start   Flags"
+        };
+
+        foreach (var entry in active)
+        {
+            var flags = new List<string>();
+            if (entry.IsBinary) flags.Add("binary");
+            if (entry.IsLocked) flags.Add("locked");
+            if (entry.IsSubdirectory) flags.Add("subdir");
+            lines.Add($"  {entry.Index,2}  {entry.FileName,-12} {entry.Extension,-3} {entry.SectorCount,7} {entry.StartSector,6}  [{(flags.Count == 0 ? "" : string.Join(',', flags))}]");
+        }
+
+        var free = AtrParser.GetMyDosFreeSectorCount(bytes, geo);
+        var used = active.Sum(e => e.SectorCount);
+
+        lines.Add("");
+        lines.Add($"{active.Count} files{(deleted.Count > 0 ? $" ({deleted.Count} deleted hidden)" : "")}, {used} sectors used, {free} sectors free");
 
         return string.Join('\n', lines);
     }
@@ -1380,6 +1466,11 @@ public static class AtrTools
                 return ExtractAllSparta(data, geometry, resolvedPath, outputPath);
             }
 
+            if (AtrParser.HasMyDosFilesystem(data))
+            {
+                return ExtractAllMyDos(data, geometry, resolvedPath, outputPath);
+            }
+
             return "ERROR: No DOS 2.x or SpartaDOS filesystem detected.";
         }
         catch (Exception ex)
@@ -1458,6 +1549,46 @@ public static class AtrTools
         return string.Join('\n', lines);
     }
 
+    private static string ExtractAllMyDos(byte[] data, AtrGeometry geometry, string resolvedPath, string outputPath)
+    {
+        var directory = AtrParser.ReadMyDosDirectory(data);
+        var activeFiles = directory.Where(e => !e.IsDeleted).ToList();
+
+        var lines = new List<string>
+        {
+            $"Extracting all files from {Path.GetFileName(resolvedPath)} (MyDOS)..."
+        };
+
+        var totalBytes = 0L;
+        for (var i = 0; i < activeFiles.Count; i++)
+        {
+            var entry = activeFiles[i];
+            try
+            {
+                var extracted = AtrParser.ExtractFile(data, geometry,
+                    new AtrDirectoryEntry(entry.Index, entry.FileName, entry.Extension,
+                        entry.StartSector, entry.SectorCount, entry.IsDeleted, entry.IsLocked, entry.IsBinary));
+                var fileName = string.IsNullOrWhiteSpace(entry.Extension)
+                    ? entry.FileName
+                    : $"{entry.FileName}.{entry.Extension}";
+                var outputFile = Path.Combine(outputPath, fileName);
+                File.WriteAllBytes(outputFile, extracted);
+                totalBytes += extracted.Length;
+                lines.Add($"  [{i + 1}/{activeFiles.Count}] {fileName} → {outputFile} ({extracted.Length:N0} bytes)");
+            }
+            catch (Exception ex)
+            {
+                var fileName = string.IsNullOrWhiteSpace(entry.Extension)
+                    ? entry.FileName
+                    : $"{entry.FileName}.{entry.Extension}";
+                lines.Add($"  [{i + 1}/{activeFiles.Count}] {fileName} → ERROR: {ex.Message}");
+            }
+        }
+
+        lines.Add($"  Complete: {activeFiles.Count} files extracted ({totalBytes:N0} bytes total)");
+        return string.Join('\n', lines);
+    }
+
     public static string InjectAll(string filePath, string sourceDir, string? pattern = null, bool dryRun = false)
     {
         try
@@ -1487,6 +1618,11 @@ public static class AtrTools
             if (AtrParser.HasSpartaDosFilesystem(data))
             {
                 return InjectAllSparta(data, geometry, resolvedPath, sourcePath, sourceFiles, dryRun);
+            }
+
+            if (AtrParser.HasMyDosFilesystem(data))
+            {
+                return InjectAllDos(data, geometry, resolvedPath, sourcePath, sourceFiles, dryRun);
             }
 
             return "ERROR: No DOS 2.x or SpartaDOS filesystem detected.";
